@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { ApplicationCommandInputType, ApplicationCommandOptionType, findOption, sendBotMessage } from "@api/Commands";
 import { definePluginSettings } from "@api/Settings";
 import { TestcordDevs } from "@utils/constants";
 import { sendMessage } from "@utils/discord";
@@ -48,6 +49,16 @@ const settings = definePluginSettings({
         type: OptionType.BOOLEAN,
         description: "Counter lock attackers. When someone tries to remove your protection or uwulock you, instantly strip their protection and uwulock them back with two fast messages.",
         default: false
+    },
+    enableAutoUwulock: {
+        type: OptionType.BOOLEAN,
+        description: "Keep watched users uwulocked. When someone removes their uwulock via prefix or slash command, instantly send ,uwulock add to re-lock them. Manage the list with /autouwulock.",
+        default: true
+    },
+    autoUwulockUserIds: {
+        type: OptionType.STRING,
+        description: "User IDs to keep uwulocked (comma separated). Managed by /autouwulock, you can also edit manually.",
+        default: ""
     }
 });
 
@@ -71,6 +82,10 @@ function getProtectedIds(): Set<string> {
     return ids;
 }
 
+function getAutoUwulockIds(): Set<string> {
+    return parseIdList(settings.store.autoUwulockUserIds);
+}
+
 function getAllowedGuildIds(): Set<string> | null {
     const raw = settings.store.allowedGuildIds?.trim();
     if (!raw) return null;
@@ -79,12 +94,34 @@ function getAllowedGuildIds(): Set<string> | null {
     return set;
 }
 
+function getSearchableText(message: any): string {
+    const parts: string[] = [];
+    if (typeof message?.content === "string" && message.content) parts.push(message.content);
+    const embeds = message?.embeds;
+    if (Array.isArray(embeds)) {
+        for (const e of embeds) {
+            if (!e || typeof e !== "object") continue;
+            if (typeof e.title === "string") parts.push(e.title);
+            if (typeof e.description === "string") parts.push(e.description);
+            if (Array.isArray(e.fields)) {
+                for (const f of e.fields) {
+                    if (typeof f?.name === "string") parts.push(f.name);
+                    if (typeof f?.value === "string") parts.push(f.value);
+                }
+            }
+            if (typeof e.footer?.text === "string") parts.push(e.footer.text);
+            if (typeof e.author?.name === "string") parts.push(e.author.name);
+        }
+    }
+    return parts.join("\n");
+}
+
 function isTargeted(message: any, targetId: string): boolean {
-    if (!message?.content || typeof message.content !== "string") return false;
-    const { content } = message as { content: string; };
-    if (Array.isArray(message.mentions) && message.mentions.some((m: any) => m?.id === targetId)) return true;
-    if (content.includes(`<@${targetId}>`) || content.includes(`<@!${targetId}>`)) return true;
-    if (content.includes(targetId) && new RegExp(`\\b${targetId}\\b`).test(content)) return true;
+    if (Array.isArray(message?.mentions) && message.mentions.some((m: any) => m?.id === targetId)) return true;
+    const text = getSearchableText(message);
+    if (!text) return false;
+    if (text.includes(`<@${targetId}>`) || text.includes(`<@!${targetId}>`)) return true;
+    if (text.includes(targetId) && new RegExp(`\\b${targetId}\\b`).test(text)) return true;
     return false;
 }
 
@@ -129,68 +166,143 @@ function isPlainUwulock(content: string): boolean {
     return true;
 }
 
+const SLASH_UNLOCK_RE = /\/uwulock\b.{0,80}\bremov/i;
+const BOT_UNLOCK_SIGNAL_RE = /remov|unlock|un[\s-]*uwu/i;
+
+function getInteractionName(message: any): string {
+    const name = message?.interaction?.name ?? message?.interactionMetadata?.name ?? message?.interaction_metadata?.name ?? message?.interaction?.commandName;
+    return typeof name === "string" ? name : "";
+}
+
+function isUnlockEvent(message: any): boolean {
+    const text = getSearchableText(message);
+    if (text && UWULOCK_REMOVE_RE.test(text)) return true;
+    if (text && SLASH_UNLOCK_RE.test(text)) return true;
+    const interactionName = getInteractionName(message);
+    if (/uwulock/i.test(interactionName)) {
+        if (/remov|unlock/i.test(interactionName) || (text && /remov|unlock/i.test(text))) return true;
+        const raw = JSON.stringify(message.interaction ?? message.interactionMetadata ?? message.interaction_metadata ?? {}).slice(0, 1000);
+        if (/remov/i.test(raw)) return true;
+    }
+    if (message?.author?.bot && text && /uwulock/i.test(text) && BOT_UNLOCK_SIGNAL_RE.test(text)) return true;
+    return false;
+}
+
 function handleMessage(message: any) {
-    if (!message?.content || typeof message.content !== "string") return;
-    if (!message.author?.id) return;
+    if (!message?.author?.id) return;
     if (!message.channel_id) return;
 
     const currentUserId = UserStore.getCurrentUser?.()?.id;
     if (!currentUserId) return;
     if (message.author.id === currentUserId) return;
-    if (message.author.bot) return;
 
     const allowed = getAllowedGuildIds();
     if (!isGuildAllowed(message.guild_id, allowed)) return;
 
-    const protectedIds = getProtectedIds();
-    if (protectedIds.size === 0) return;
+    const content = typeof message.content === "string" ? message.content : "";
+    const isBot = message.author.bot === true;
 
-    const { content } = message as { content: string; };
-    const targeted = getTargetedIds(message, protectedIds);
+    // Existing defenses watch attacker prefix commands only.
+    if (!isBot && content) {
+        const protectedIds = getProtectedIds();
+        const targeted = getTargetedIds(message, protectedIds);
 
-    // If no direct mention match, some commands may still target protected users via raw id
-    // getTargetedIds already checks raw id, so empty means not targeting protected
-    if (targeted.length === 0) return;
+        if (targeted.length > 0) {
+            const attackerId = message.author.id;
+            const attackerMention = `<@${attackerId}>`;
 
-    const attackerId = message.author.id;
-    const attackerMention = `<@${attackerId}>`;
+            // 1. Protect re-add: ,uwulock protect remove <@target> -> ,uwulock protect add <@target>
+            if (settings.store.enableProtectReadd && PROTECT_REMOVE_RE.test(content)) {
+                for (const tid of targeted) {
+                    sendBotCommand(message.channel_id, `,uwulock protect add <@${tid}>`);
+                }
+            }
 
-    // 1. Protect re-add: ,uwulock protect remove <@target> -> ,uwulock protect add <@target>
-    if (settings.store.enableProtectReadd && PROTECT_REMOVE_RE.test(content)) {
+            // 2. Uwulock remove: ,uwulock <@target> -> ,uwulock remove <@target>
+            if (settings.store.enableUwulockRemove && isPlainUwulock(content)) {
+                for (const tid of targeted) {
+                    sendBotCommand(message.channel_id, `,uwulock remove <@${tid}>`);
+                }
+            }
+
+            // 3. Counter timeout: ,uwulock/,to/,kick/,ban/,mute on protected -> ,to <@attacker> 60s
+            if (settings.store.enableCounterTo) {
+                const isAttack = ATTACK_PREFIXES.some(re => re.test(content));
+                if (isAttack) {
+                    const duration = Math.max(1, Number(settings.store.counterDuration) || 60);
+                    // avoid sending multiple counters for same message
+                    sendBotCommand(message.channel_id, `,to ${attackerMention} ${duration}s`);
+                }
+            }
+
+            // 4. Counter lock: remove attacker protection then uwulock them
+            if (settings.store.enableCounterLock && (PROTECT_REMOVE_RE.test(content) || isPlainUwulock(content))) {
+                sendBotCommand(message.channel_id, `,uwulock protect remove ${attackerMention}`);
+                sendBotCommand(message.channel_id, `,uwulock add ${attackerMention}`);
+            }
+        }
+    }
+
+    // 5. Auto uwulock: re-lock watched users when someone unlocks them via prefix, slash, or bot confirmation.
+    if (settings.store.enableAutoUwulock) {
+        const watched = getAutoUwulockIds();
+        if (watched.size === 0) return;
+        if (!isUnlockEvent(message)) return;
+        const targeted = getTargetedIds(message, watched);
+        if (targeted.length === 0) return;
         for (const tid of targeted) {
-            sendBotCommand(message.channel_id, `,uwulock protect add <@${tid}>`);
+            sendBotCommand(message.channel_id, `,uwulock add <@${tid}>`);
         }
-    }
-
-    // 2. Uwulock remove: ,uwulock <@target> -> ,uwulock remove <@target>
-    if (settings.store.enableUwulockRemove && isPlainUwulock(content)) {
-        for (const tid of targeted) {
-            sendBotCommand(message.channel_id, `,uwulock remove <@${tid}>`);
-        }
-    }
-
-    // 3. Counter timeout: ,uwulock/,to/,kick/,ban/,mute on protected -> ,to <@attacker> 60s
-    if (settings.store.enableCounterTo) {
-        const isAttack = ATTACK_PREFIXES.some(re => re.test(content));
-        if (isAttack) {
-            const duration = Math.max(1, Number(settings.store.counterDuration) || 60);
-            // avoid sending multiple counters for same message
-            sendBotCommand(message.channel_id, `,to ${attackerMention} ${duration}s`);
-        }
-    }
-
-    // 4. Counter lock: remove attacker protection then uwulock them
-    if (settings.store.enableCounterLock && (PROTECT_REMOVE_RE.test(content) || isPlainUwulock(content))) {
-        sendBotCommand(message.channel_id, `,uwulock protect remove ${attackerMention}`);
-        sendBotCommand(message.channel_id, `,uwulock add ${attackerMention}`);
     }
 }
 
 export default definePlugin({
     name: "GreedCmds",
-    description: "Greed bot auto defense. Re-adds uwulock protect, removes uwulock, and counters kick/ban/mute/to attacks with timeout. Supports protected users and allowed servers filtering.",
+    description: "Greed bot auto defense. Re-adds uwulock protect, removes uwulock, counters kick/ban/mute/to attacks, and keeps /autouwulock users locked. Supports protected users and allowed servers filtering.",
     authors: [TestcordDevs.x2b],
     settings,
+
+    commands: [
+        {
+            name: "autouwulock",
+            description: "Keep a user uwulocked. Toggles watch; re-sends ,uwulock add when they get unlocked.",
+            inputType: ApplicationCommandInputType.BUILT_IN,
+            options: [
+                {
+                    name: "user",
+                    description: "User to keep uwulocked. Leave empty to list watched users.",
+                    type: ApplicationCommandOptionType.USER,
+                    required: false
+                }
+            ],
+            execute(args, ctx) {
+                const userId = findOption<string>(args, "user", "");
+                const watched = getAutoUwulockIds();
+                if (!userId) {
+                    if (watched.size === 0) {
+                        sendBotMessage(ctx.channel.id, { content: "Autouwulock list is empty. Use `/autouwulock @user` to watch someone." });
+                    } else {
+                        const list = [...watched].map(id => `<@${id}>`).join(", ");
+                        sendBotMessage(ctx.channel.id, { content: `Autouwulock watching (${watched.size}): ${list}` });
+                    }
+                    return;
+                }
+                if (!/^\d{5,22}$/.test(userId)) {
+                    sendBotMessage(ctx.channel.id, { content: "Invalid user. Pick someone with `/autouwulock @user`." });
+                    return;
+                }
+                if (watched.has(userId)) {
+                    watched.delete(userId);
+                    settings.store.autoUwulockUserIds = [...watched].join(", ");
+                    sendBotMessage(ctx.channel.id, { content: `Removed <@${userId}> from autouwulock. Watching ${watched.size}.` });
+                } else {
+                    watched.add(userId);
+                    settings.store.autoUwulockUserIds = [...watched].join(", ");
+                    sendBotMessage(ctx.channel.id, { content: `Added <@${userId}> to autouwulock. They will be re-locked with \`,uwulock add\` when unlocked.` });
+                }
+            }
+        }
+    ],
 
     flux: {
         MESSAGE_CREATE(data: any) {
