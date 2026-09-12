@@ -10,8 +10,7 @@ import { makeRange, OptionType } from "@utils/types";
 
 export const logger = new Logger("ChromeTabs");
 
-/** Chrome keeps tabs readable until they hit this floor, then starts scrolling */
-export const MIN_TAB_WIDTH = 56;
+export const MIN_TAB_WIDTH = 20;
 export const MAX_TAB_WIDTH = 240;
 
 export const settings = definePluginSettings({

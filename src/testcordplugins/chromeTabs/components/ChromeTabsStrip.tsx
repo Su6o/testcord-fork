@@ -21,7 +21,9 @@ const cl = classNameFactory("tc-chrometabs-");
 
 const NEW_TAB_BUTTON_WIDTH = 34;
 export const NARROW_TAB_WIDTH = 88;
-export const TINY_TAB_WIDTH = 66;
+export const TINY_TAB_WIDTH = 58;
+export const COMPACT_TAB_WIDTH = 38;
+export const SUPER_COMPACT_TAB_WIDTH = 26;
 
 function matchesKeybind(e: KeyboardEvent) {
     const mod = e.ctrlKey || e.metaKey;
@@ -193,26 +195,42 @@ export function ChromeTabsStrip({
     const activeId = getActiveTabId();
     const tabCount = tabs.length;
 
+    const isTitle = position === "titlebar" || titleBar;
+
     const recalculateTabWidth = useCallback(() => {
         const strip = stripRef.current;
         if (!strip || tabCount === 0 || isVertical) return;
 
-        const available = strip.clientWidth - NEW_TAB_BUTTON_WIDTH;
-        if (available <= 0) return;
+        const isTitleMode = position === "titlebar" || titleBar;
+        const newTabBtnWidth = isTitleMode ? 32 : NEW_TAB_BUTTON_WIDTH;
+        const overlapPx = isTitleMode ? 6 : 1;
+        const stripWidth = strip.clientWidth;
+        const available = stripWidth - newTabBtnWidth - 8;
+        if (available <= 0) {
+            setTabWidth(MIN_TAB_WIDTH);
+            return;
+        }
 
-        const ideal = Math.floor(available / tabCount);
-        setTabWidth(Math.max(MIN_TAB_WIDTH, Math.min(maxTabWidth, ideal)));
-    }, [tabCount, maxTabWidth, isVertical]);
+        const ideal = Math.floor((available + (tabCount - 1) * overlapPx) / tabCount);
+        const minFloor = Math.max(16, Math.min(MIN_TAB_WIDTH, ideal));
+        setTabWidth(Math.max(minFloor, Math.min(maxTabWidth, ideal)));
+    }, [tabCount, maxTabWidth, isVertical, position, titleBar]);
 
     useLayoutEffect(recalculateTabWidth, [recalculateTabWidth]);
 
     useEffect(() => {
         const strip = stripRef.current;
+        const container = containerRef.current;
         if (!strip) return;
 
         const observer = new ResizeObserver(recalculateTabWidth);
         observer.observe(strip);
-        return () => observer.disconnect();
+        if (container) observer.observe(container);
+        window.addEventListener("resize", recalculateTabWidth, { passive: true });
+        return () => {
+            observer.disconnect();
+            window.removeEventListener("resize", recalculateTabWidth);
+        };
     }, [recalculateTabWidth]);
 
     const openNewTab = useCallback(() => {
@@ -322,6 +340,9 @@ export function ChromeTabsStrip({
 
     if (!userId || isFullscreen || tabCount === 0) return null;
 
+    const isCompact = !isVertical && tabWidth < COMPACT_TAB_WIDTH;
+    const isSuperCompact = !isVertical && tabWidth < SUPER_COMPACT_TAB_WIDTH;
+
     return (
         <div
             ref={containerRef}
@@ -355,6 +376,8 @@ export function ChromeTabsStrip({
                         isBeforeActive={tabs[index + 1]?.id === activeId}
                         narrow={!isVertical && tabWidth < NARROW_TAB_WIDTH}
                         tiny={!isVertical && tabWidth < TINY_TAB_WIDTH}
+                        compact={isCompact}
+                        superCompact={isSuperCompact}
                         onDragStart={handleDragStart}
                         onDragEnter={handleDragEnter}
                         onDragEnd={handleDragEnd}

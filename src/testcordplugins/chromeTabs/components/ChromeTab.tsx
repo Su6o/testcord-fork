@@ -21,15 +21,9 @@ import { TabContextMenu } from "./ContextMenus";
 
 const cl = classNameFactory("tc-chrometabs-");
 
-/** Chrome's tab corner curve, drawn as an SVG so the tab merges into the strip */
 function TabShape() {
     return (
         <svg className={cl("shape")} viewBox="0 0 200 36" preserveAspectRatio="none" aria-hidden="true">
-            {/*
-                Left curve out of the strip, flat top, right curve back down.
-                Rendered with preserveAspectRatio="none" so it stretches to any tab width
-                while the 8px corner radii stay visually close to Chrome's.
-            */}
             <path d="M0 36 C4 36 6 34 6 30 L6 8 C6 3.6 9.6 0 14 0 L186 0 C190.4 0 194 3.6 194 8 L194 30 C194 34 196 36 200 36 Z" />
         </svg>
     );
@@ -44,7 +38,6 @@ function GuildIcon({ guild }: { guild: Guild; }) {
         );
     }
 
-    // animated guild icons are stored as .gif; asking the CDN for .png serves a stale static frame
     const ext = guild.icon.startsWith("a_") ? ".gif" : ".png";
 
     return (
@@ -91,8 +84,6 @@ function UnreadBadge({ channelId }: { channelId: string; }) {
             };
         },
         [channelId],
-        // ReadStateStore emits constantly while messages stream in; without this
-        // equality check every tab badge re-renders on every single event.
         (a, b) => a.hasUnread === b.hasUnread
             && a.mentionCount === b.mentionCount
             && a.unreadCount === b.unreadCount
@@ -111,7 +102,6 @@ function UnreadBadge({ channelId }: { channelId: string; }) {
     );
 }
 
-/** The favicon-position icon plus the tab label */
 function TabLabel({ tab }: { tab: Tab; }) {
     const { useDisplayNames, showDmStatus } = settings.use(["useDisplayNames", "showDmStatus"]);
 
@@ -120,8 +110,6 @@ function TabLabel({ tab }: { tab: Tab; }) {
     const recipients = channel?.recipients;
     const dmRecipientId = recipients?.length === 1 ? recipients[0] : undefined;
 
-    // single subscription: PresenceStore emits constantly (every presence
-    // change of every user), so one selector instead of two halves that work
     const { status, isMobile } = useStateFromStores(
         [PresenceStore],
         () => ({
@@ -141,7 +129,6 @@ function TabLabel({ tab }: { tab: Tab; }) {
         </>;
     }
 
-    // guild channel
     if (guild) {
         return <>
             <GuildIcon guild={guild} />
@@ -154,7 +141,6 @@ function TabLabel({ tab }: { tab: Tab; }) {
         </>;
     }
 
-    // 1:1 DM
     if (channel && dmRecipientId) {
         const user = UserStore.getUser(dmRecipientId) as User & { globalName?: string; };
         const name = user
@@ -174,7 +160,6 @@ function TabLabel({ tab }: { tab: Tab; }) {
         </>;
     }
 
-    // group DM
     if (channel && recipients?.length) {
         return <>
             <GroupIcon channel={channel} />
@@ -194,15 +179,13 @@ export interface ChromeTabProps {
     tab: Tab;
     index: number;
     isActive: boolean;
-    /** hides the close button when only one tab is open, like Chrome */
     canClose: boolean;
-    /** true while this tab is the one being dragged */
     isDragging: boolean;
-    /** true when the tab to the right of this one is active (hides the separator) */
     isBeforeActive?: boolean;
-    /** strip-wide width class flags, computed once in the strip */
     narrow?: boolean;
     tiny?: boolean;
+    compact?: boolean;
+    superCompact?: boolean;
     onDragStart: (index: number) => void;
     onDragEnter: (index: number) => void;
     onDragEnd: () => void;
@@ -217,13 +200,14 @@ export function ChromeTab({
     isBeforeActive,
     narrow,
     tiny,
+    compact,
+    superCompact,
     onDragStart,
     onDragEnter,
     onDragEnd
 }: ChromeTabProps) {
     const { showUnreadBadges } = settings.use(["showUnreadBadges"]);
 
-    // cheap string building; useMemo would go stale on channel/guild renames anyway
     const tooltipText = (() => {
         const page = getSyntheticPage(tab.channelId);
         if (page) return page.label;
@@ -254,7 +238,9 @@ export function ChromeTab({
                 isDragging && cl("tab-dragging"),
                 isBeforeActive && cl("tab-before-active"),
                 narrow && cl("tab-narrow"),
-                tiny && cl("tab-tiny")
+                tiny && cl("tab-tiny"),
+                compact && cl("tab-compact"),
+                superCompact && cl("tab-super-compact")
             )}
             role="tab"
             aria-selected={isActive}
@@ -290,7 +276,6 @@ export function ChromeTab({
                 )}
             </Tooltip>
 
-            {/* Chrome's vertical separator, hidden next to the active tab */}
             <div className={cl("separator")} />
         </div>
     );

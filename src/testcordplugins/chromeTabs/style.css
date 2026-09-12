@@ -47,11 +47,11 @@ body:has([class*="popout"]),
 .tc-chrometabs-strip {
     display: flex;
     align-items: flex-end;
-    flex: 1;
+    flex: 1 1 auto;
     min-width: 0;
+    max-width: 100%;
     height: var(--tc-tab-height);
-    overflow-x: auto;
-    overflow-y: hidden;
+    overflow: hidden;
 
     scrollbar-width: none;
 }
@@ -67,16 +67,18 @@ body:has([class*="popout"]),
     align-items: center;
     box-sizing: border-box;
     width: var(--tc-tab-width, 200px);
+    max-width: var(--tc-tab-width, 200px);
     min-width: 0;
     height: var(--tc-tab-height);
     padding: 0;
 
-    margin-right: -1px;
+    margin-right: -6px;
     background: none;
     border: none;
     cursor: default;
-    flex-shrink: 0;
+    flex-shrink: 1;
     -webkit-app-region: no-drag;
+    transition: width 0.1s cubic-bezier(0.2, 0, 0, 1), max-width 0.1s cubic-bezier(0.2, 0, 0, 1), margin 0.1s ease;
 }
 
 .tc-chrometabs-shape {
@@ -98,11 +100,15 @@ body:has([class*="popout"]),
 }
 
 .tc-chrometabs-tab-active {
-    z-index: 2;
+    z-index: 5;
+}
+
+.tc-chrometabs-tab:hover {
+    z-index: 8;
 }
 
 .tc-chrometabs-tab-dragging {
-    z-index: 3;
+    z-index: 20;
     opacity: 0.75;
 }
 
@@ -116,7 +122,7 @@ body:has([class*="popout"]),
     width: 100%;
     min-width: 0;
 
-    padding: 0 8px 0 14px;
+    padding: 0 10px 0 12px;
     overflow: hidden;
 }
 
@@ -180,6 +186,37 @@ body:has([class*="popout"]),
 .tc-chrometabs-tab-narrow .tc-chrometabs-content {
     justify-content: center;
     padding: 0 6px;
+    gap: 0;
+}
+
+.tc-chrometabs-tab-compact .tc-chrometabs-content {
+    justify-content: center;
+    padding: 0 4px;
+    gap: 0;
+}
+
+.tc-chrometabs-tab-super-compact {
+    margin-right: -8px;
+}
+
+.tc-chrometabs-tab-super-compact .tc-chrometabs-content {
+    justify-content: center;
+    padding: 0 2px;
+    gap: 0;
+}
+
+.tc-chrometabs-tab-compact .tc-chrometabs-badge {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    min-width: 6px;
+    width: 6px;
+    height: 6px;
+    padding: 0;
+    border-radius: 50%;
+    border: 1.5px solid var(--background-floating, #111214);
+    font-size: 0;
+    line-height: 0;
 }
 
 
@@ -242,7 +279,9 @@ body:has([class*="popout"]),
     background-color: var(--background-mod-stronger, rgb(255 255 255 / 16%));
 }
 
-.tc-chrometabs-tab-tiny .tc-chrometabs-close {
+.tc-chrometabs-tab-tiny .tc-chrometabs-close,
+.tc-chrometabs-tab-compact .tc-chrometabs-close,
+.tc-chrometabs-tab-super-compact .tc-chrometabs-close {
     display: none;
 }
 
@@ -250,19 +289,30 @@ body:has([class*="popout"]),
 .tc-chrometabs-separator {
     position: absolute;
     top: 50%;
-    right: 0;
+    right: 3px;
     width: 1px;
     height: 16px;
-    background-color: var(--border-subtle, rgb(255 255 255 / 8%));
+    border-radius: 1px;
+    background-color: var(--border-subtle, rgba(255, 255, 255, 0.2));
     pointer-events: none;
     transform: translateY(-50%);
     transition: opacity 0.12s ease;
+    z-index: 2;
+}
+
+[class*="theme-light"] .tc-chrometabs-separator,
+.theme-light .tc-chrometabs-separator {
+    background-color: var(--border-subtle, rgba(0, 0, 0, 0.2));
 }
 
 .tc-chrometabs-tab-active .tc-chrometabs-separator,
 .tc-chrometabs-tab:last-of-type .tc-chrometabs-separator,
-.tc-chrometabs-tab-before-active .tc-chrometabs-separator,
-.tc-chrometabs-tab:hover .tc-chrometabs-separator {
+.tc-chrometabs-tab:hover .tc-chrometabs-separator,
+.tc-chrometabs-tab:has(+ .tc-chrometabs-tab:hover) .tc-chrometabs-separator,
+.tc-chrometabs-tab-dragging .tc-chrometabs-separator,
+.tc-chrometabs-tab:has(+ .tc-chrometabs-tab-dragging) .tc-chrometabs-separator,
+.tc-chrometabs-tab-compact .tc-chrometabs-separator,
+.tc-chrometabs-tab-super-compact .tc-chrometabs-separator {
     opacity: 0;
 }
 
@@ -307,8 +357,9 @@ body:has([class*="popout"]),
 [class*="leading_"]:has(.tc-chrometabs-container-titlebar) {
     flex: 1 1 auto !important;
     min-width: 0 !important;
+    max-width: calc(100% - 130px) !important;
     display: flex !important;
-    align-items: center !important;
+    align-items: flex-end !important;
     overflow: hidden !important;
 }
 
@@ -317,61 +368,50 @@ body:has([class*="popout"]),
 }
 
 .tc-chrometabs-container.tc-chrometabs-container-titlebar {
-    --tc-tab-height: 28px;
+    --tc-tab-height: 34px;
 
     flex: 1 1 auto !important;
     min-width: 0 !important;
+    max-width: 100% !important;
     height: var(--custom-app-top-bar-height, 36px) !important;
     margin-left: 8px !important;
     margin-right: 8px !important;
-    align-items: center !important;
-    padding: 0 4px !important;
+    align-items: flex-end !important;
+    padding: 0 !important;
     background: none !important;
     grid-area: auto !important;
-    max-width: none !important;
     position: relative !important;
+    overflow: hidden !important;
 }
 
 .tc-chrometabs-container-titlebar .tc-chrometabs-strip {
-    align-items: center;
-    gap: 4px;
+    align-items: flex-end !important;
+    gap: 0 !important;
     height: 100%;
-}
-
-.tc-chrometabs-container-titlebar .tc-chrometabs-shape {
-    display: none;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    overflow: hidden !important;
 }
 
 .tc-chrometabs-container-titlebar .tc-chrometabs-tab {
     height: var(--tc-tab-height);
-    margin-right: 0;
-    border-radius: 8px;
-    background-color: transparent;
-    transition: background-color 0.12s ease;
-}
-
-.tc-chrometabs-container-titlebar .tc-chrometabs-tab:hover:not(.tc-chrometabs-tab-active) {
-    background-color: var(--background-mod-subtle, rgb(255 255 255 / 4%));
-}
-
-.tc-chrometabs-container-titlebar .tc-chrometabs-tab-active {
-    background-color: var(--background-mod-strong, rgb(255 255 255 / 8%));
+    margin-right: -6px;
+    background: none;
+    border-radius: 0;
+    transition: width 0.1s cubic-bezier(0.2, 0, 0, 1), max-width 0.1s cubic-bezier(0.2, 0, 0, 1), margin 0.1s ease;
 }
 
 .tc-chrometabs-container-titlebar .tc-chrometabs-content {
-    padding: 0 6px 0 8px;
+    padding: 0 10px 0 12px;
     gap: 6px;
-}
-
-.tc-chrometabs-container-titlebar .tc-chrometabs-separator {
-    display: none;
 }
 
 .tc-chrometabs-container-titlebar .tc-chrometabs-new-tab {
     width: 28px;
     height: 28px;
-    margin: 0;
-    border-radius: 8px;
+    margin: 0 0 3px 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
 }
 
 .tc-chrometabs-app-row {
