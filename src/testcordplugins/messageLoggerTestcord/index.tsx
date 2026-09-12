@@ -377,11 +377,11 @@ export default definePlugin({
     description: "The best of all loggers in one plugin. Logs deleted/edited messages with inline chat display, ghost ping detection, disk-saved attachments, silent delete, anti-antilog protection, search, protected logs and automatic maintenance.",
     authors: [TestcordDevs.x2b],
     tags: ["Chat", "Utility"],
-    dependencies: ["HeaderBarAPI", "ContextMenuAPI"],
+    dependencies: ["MessageLogger", "HeaderBarAPI", "ContextMenuAPI"],
     settings,
     settingsAboutComponent: () => (
         <div>
-            <p>MessageLoggerEnhanced must remain disabled while MessageLoggerTestcord is enabled. The Silent Delete options defer to AntilogPremium when that plugin is enabled. AntiAntilog is now merged into this plugin (nonce blocking and media preservation). Saved attachments from preserved messages are downloaded to disk and restored after restart, so you can disable the standalone AntiAntilog plugin.</p>
+            <p>MessageLogger is required by MessageLoggerTestcord to function. MessageLoggerEnhanced must remain disabled while MessageLoggerTestcord is enabled. The Silent Delete options defer to AntilogPremium when that plugin is enabled. AntiAntilog is now merged into this plugin (nonce blocking and media preservation). Saved attachments from preserved messages are downloaded to disk and restored after restart, so you can disable the standalone AntiAntilog plugin.</p>
             <div className={cl("actions")} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button className="vc-testcord-ml-btn" onClick={() => openLogs()}>Open logs</button>
                 <button
@@ -715,6 +715,13 @@ export default definePlugin({
         if (isPluginEnabled("MessageLoggerEnhanced")) {
             Settings.plugins.MessageLoggerEnhanced.enabled = false;
             showToast("MessageLoggerEnhanced was disabled. Restart to activate MessageLoggerTestcord safely.", Toasts.Type.FAILURE);
+            return;
+        }
+
+        if (!isPluginEnabled("MessageLogger")) {
+            Settings.plugins.MessageLogger = Settings.plugins.MessageLogger ?? {};
+            Settings.plugins.MessageLogger.enabled = true;
+            showToast("MessageLogger is required by MessageLoggerTestcord. Restart to activate safely.", Toasts.Type.FAILURE);
             return;
         }
 
