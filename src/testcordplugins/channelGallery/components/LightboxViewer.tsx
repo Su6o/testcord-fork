@@ -27,7 +27,10 @@ export function LightboxViewer(props: {
 }) {
     const { items, index, channelId, onClose, onChangeIndex } = props;
     const item = items[index];
-    const url = item?.url;
+    const url = item?.proxyUrl ?? item?.url;
+
+    const [downloading, setDownloading] = useState(false);
+    const [imgFailed, setImgFailed] = useState(false);
 
     const hasPrev = index > 0;
     const hasNext = index < items.length - 1;
@@ -60,9 +63,34 @@ export function LightboxViewer(props: {
         if (next?.url) preload(next.url);
     }, [items, nextIndex, prevIndex]);
 
-    const [downloading, setDownloading] = useState(false);
+    useEffect(() => {
+        setImgFailed(false);
+    }, [index, url]);
 
-    if (!item || !url) return null;
+    if (!item || !url) {
+        return (
+            <div
+                style={{
+                    height: "min(66vh, 640px)",
+                    minHeight: 380,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 12,
+                    padding: 24,
+                    background: "var(--background-primary)",
+                    color: "var(--text-muted)",
+                    fontSize: 14
+                }}
+            >
+                <span>Unable to load this image.</span>
+                <Button size={Button.Sizes.SMALL} onClick={onClose}>
+                    Back to gallery
+                </Button>
+            </div>
+        );
+    }
 
     const jump = () => {
         try {
@@ -97,7 +125,8 @@ export function LightboxViewer(props: {
         <div
             style={{
                 position: "relative",
-                height: "100%",
+                height: "min(66vh, 640px)",
+                minHeight: 380,
                 width: "100%",
                 background: "var(--background-primary)"
             }}
@@ -177,8 +206,11 @@ export function LightboxViewer(props: {
                     }}
                 />
                 <img
-                    src={url}
+                    src={imgFailed && item.url ? item.url : url}
                     alt={item.filename ?? "Image"}
+                    onError={() => {
+                        if (!imgFailed && item.url && item.url !== url) setImgFailed(true);
+                    }}
                     style={{
                         maxWidth: "100%",
                         maxHeight: "100%",

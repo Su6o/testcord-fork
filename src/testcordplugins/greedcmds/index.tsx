@@ -10,7 +10,7 @@ import { TestcordDevs } from "@utils/constants";
 import { sendMessage } from "@utils/discord";
 import { Logger } from "@utils/Logger";
 import definePlugin, { OptionType } from "@utils/types";
-import { UserStore } from "@webpack/common";
+import { ChannelStore, GuildMemberStore,UserStore } from "@webpack/common";
 
 const logger = new Logger("GreedCmds");
 
@@ -52,7 +52,17 @@ const settings = definePluginSettings({
     },
     enableAutoUwulock: {
         type: OptionType.BOOLEAN,
-        description: "Keep watched users uwulocked. When someone removes their uwulock via prefix or slash command, instantly send ,uwulock add to re-lock them. Manage the list with /autouwulock.",
+        description: "Keep watched users uwulocked. When someone removes their uwulock via prefix or slash command, instantly send ,uwulock add to re-lock them. If Greed refuses to lock them, their protect is stripped first. Manage the list with /autouwulock.",
+        default: true
+    },
+    enableAutoSpread: {
+        type: OptionType.BOOLEAN,
+        description: "Spread autouwulock to attackers. When someone removes uwulock from a watched user via prefix or slash command, add the attacker to autouwulock and lock them too.",
+        default: false
+    },
+    enableLockFailsafe: {
+        type: OptionType.BOOLEAN,
+        description: "Failsafe for watched users. Greed deletes locked users messages, so if a watched user's message survives 8 seconds they are probably unlocked and ,uwulock add is sent again (at most once per minute per user).",
         default: true
     },
     autoUwulockUserIds: {
@@ -94,6 +104,19 @@ function getAllowedGuildIds(): Set<string> | null {
     return set;
 }
 
+function getComponentsText(components: any): string[] {
+    const out: string[] = [];
+    if (!Array.isArray(components)) return out;
+    const stack: any[] = [...components];
+    while (stack.length > 0) {
+        const c = stack.pop();
+        if (!c || typeof c !== "object") continue;
+        if (typeof c.content === "string" && c.content) out.push(c.content);
+        if (Array.isArray(c.components)) stack.push(...c.components);
+    }
+    return out;
+}
+
 function getSearchableText(message: any): string {
     const parts: string[] = [];
     if (typeof message?.content === "string" && message.content) parts.push(message.content);
@@ -113,22 +136,40 @@ function getSearchableText(message: any): string {
             if (typeof e.author?.name === "string") parts.push(e.author.name);
         }
     }
+    for (const t of getComponentsText(message?.components)) parts.push(t);
     return parts.join("\n");
 }
 
-function isTargeted(message: any, targetId: string): boolean {
+function getUserDisplayNames(userId: string, guildId: string | undefined): string[] {
+    const names: string[] = [];
+    const user = UserStore.getUser?.(userId) as any;
+    if (typeof user?.username === "string" && user.username) names.push(user.username);
+    if (typeof user?.globalName === "string" && user.globalName) names.push(user.globalName);
+    if (guildId) {
+        const nick = (GuildMemberStore.getMember?.(guildId, userId) as any)?.nick;
+        if (typeof nick === "string" && nick) names.push(nick);
+    }
+    return names;
+}
+
+function isTargeted(message: any, targetId: string, guildId: string | undefined): boolean {
     if (Array.isArray(message?.mentions) && message.mentions.some((m: any) => m?.id === targetId)) return true;
     const text = getSearchableText(message);
     if (!text) return false;
     if (text.includes(`<@${targetId}>`) || text.includes(`<@!${targetId}>`)) return true;
     if (text.includes(targetId) && new RegExp(`\\b${targetId}\\b`).test(text)) return true;
+    // Greed slash confirmations name the user without mentioning them, so match display names too.
+    const lower = text.toLowerCase();
+    for (const name of getUserDisplayNames(targetId, guildId)) {
+        if (name.length >= 3 && lower.includes(name.toLowerCase())) return true;
+    }
     return false;
 }
 
-function getTargetedIds(message: any, protectedIds: Set<string>): string[] {
+function getTargetedIds(message: any, protectedIds: Set<string>, guildId: string | undefined): string[] {
     const out: string[] = [];
     for (const id of protectedIds) {
-        if (isTargeted(message, id)) out.push(id);
+        if (isTargeted(message, id, guildId)) out.push(id);
     }
     return out;
 }
@@ -168,10 +209,76 @@ function isPlainUwulock(content: string): boolean {
 
 const SLASH_UNLOCK_RE = /\/uwulock\b.{0,80}\bremov/i;
 const BOT_UNLOCK_SIGNAL_RE = /remov|unlock|un[\s-]*uwu/i;
+const FAILSAFE_WINDOW_MS = 8_000;
+const FAILSAFE_RETRY_COOLDOWN_MS = 60_000;
+const UWULOCK_FAIL_RE = /can['’]?t|cannot|couldn['’]?t|fail|unable|error|already protected|is protected|remove.{0,40}protect/i;
+const UWULOCK_LOCK_SUCCESS_RE = /successfully|now (uwulocked|locked|protected)|has been (uwulocked|locked)|protect (added|enabled)/i;
 
 function getInteractionName(message: any): string {
     const name = message?.interaction?.name ?? message?.interactionMetadata?.name ?? message?.interaction_metadata?.name ?? message?.interaction?.commandName;
     return typeof name === "string" ? name : "";
+}
+
+function getInteractionUserId(message: any): string | undefined {
+    const ids = [
+        message?.interaction?.user?.id,
+        message?.interaction?.member?.user?.id,
+        message?.interactionMetadata?.user?.id,
+        message?.interaction_metadata?.user?.id
+    ];
+    for (const id of ids) {
+        if (typeof id === "string" && /^\d{5,22}$/.test(id)) return id;
+    }
+    return undefined;
+}
+
+function getUnlockAttackerId(message: any, content: string, isBot: boolean): string | undefined {
+    if (!isBot && content && (UWULOCK_REMOVE_RE.test(content) || SLASH_UNLOCK_RE.test(content))) {
+        const id = message?.author?.id;
+        if (typeof id === "string" && /^\d{5,22}$/.test(id)) return id;
+    }
+    return getInteractionUserId(message);
+}
+
+function isUwulockAddFailure(message: any): boolean {
+    if (message?.author?.bot !== true) return false;
+    const text = getSearchableText(message);
+    if (!text || !/uwulock/i.test(text)) return false;
+    if (UWULOCK_LOCK_SUCCESS_RE.test(text)) return false;
+    return UWULOCK_FAIL_RE.test(text);
+}
+
+const failsafePending = new Map<string, { userId: string; channelId: string; timeout: ReturnType<typeof setTimeout>; }>();
+const failsafeLastRetry = new Map<string, number>();
+
+function armLockFailsafe(message: any, watched: Set<string>) {
+    const userId = message?.author?.id;
+    if (typeof userId !== "string" || !watched.has(userId)) return;
+    if (message?.author?.bot === true) return;
+    if (message?.webhook_id || message?.webhookId) return;
+    const type = message?.type;
+    if (type !== 0 && type !== 19) return;
+    const channelId = message?.channel_id;
+    if (typeof channelId !== "string" || !channelId) return;
+    if (typeof message?.id !== "string" || failsafePending.has(message.id)) return;
+    if (failsafePending.size > 200) return;
+    const timeout = setTimeout(() => {
+        failsafePending.delete(message.id);
+        const now = Date.now();
+        if (now - (failsafeLastRetry.get(userId) ?? 0) < FAILSAFE_RETRY_COOLDOWN_MS) return;
+        failsafeLastRetry.set(userId, now);
+        sendBotCommand(channelId, `,uwulock add <@${userId}>`);
+    }, FAILSAFE_WINDOW_MS);
+    failsafePending.set(message.id, { userId, channelId, timeout });
+}
+
+function handleDelete(data: any) {
+    const id = data?.id;
+    if (typeof id !== "string") return;
+    const pending = failsafePending.get(id);
+    if (!pending) return;
+    clearTimeout(pending.timeout);
+    failsafePending.delete(id);
 }
 
 function isUnlockEvent(message: any): boolean {
@@ -201,11 +308,12 @@ function handleMessage(message: any) {
 
     const content = typeof message.content === "string" ? message.content : "";
     const isBot = message.author.bot === true;
+    const guildId: string | undefined = message.guild_id ?? ChannelStore.getChannel?.(message.channel_id)?.guild_id;
 
     // Existing defenses watch attacker prefix commands only.
     if (!isBot && content) {
         const protectedIds = getProtectedIds();
-        const targeted = getTargetedIds(message, protectedIds);
+        const targeted = getTargetedIds(message, protectedIds, guildId);
 
         if (targeted.length > 0) {
             const attackerId = message.author.id;
@@ -246,19 +354,47 @@ function handleMessage(message: any) {
     // 5. Auto uwulock: re-lock watched users when someone unlocks them via prefix, slash, or bot confirmation.
     if (settings.store.enableAutoUwulock) {
         const watched = getAutoUwulockIds();
-        if (watched.size === 0) return;
-        if (!isUnlockEvent(message)) return;
-        const targeted = getTargetedIds(message, watched);
-        if (targeted.length === 0) return;
-        for (const tid of targeted) {
-            sendBotCommand(message.channel_id, `,uwulock add <@${tid}>`);
+        if (watched.size > 0) {
+            // 5a. Greed refused to lock a watched user (usually protected) -> strip protect so the lock can land.
+            if (isBot && isUwulockAddFailure(message)) {
+                const failed = getTargetedIds(message, watched, guildId);
+                for (const tid of failed) {
+                    sendBotCommand(message.channel_id, `,uwulock protect remove <@${tid}>`);
+                    sendBotCommand(message.channel_id, `,uwulock add <@${tid}>`);
+                }
+            } else if (isUnlockEvent(message)) {
+                const targeted = getTargetedIds(message, watched, guildId);
+                if (targeted.length > 0) {
+                    for (const tid of targeted) {
+                        sendBotCommand(message.channel_id, `,uwulock add <@${tid}>`);
+                    }
+                    // 6. Auto spread: punish the admin who unlocked a watched user.
+                    if (settings.store.enableAutoSpread) {
+                        const attackerId = getUnlockAttackerId(message, content, isBot);
+                        const protectedIds = getProtectedIds();
+                        if (attackerId && !targeted.includes(attackerId) && !protectedIds.has(attackerId)) {
+                            if (!watched.has(attackerId)) {
+                                watched.add(attackerId);
+                                settings.store.autoUwulockUserIds = [...watched].join(", ");
+                            }
+                            sendBotCommand(message.channel_id, `,uwulock protect remove <@${attackerId}>`);
+                            sendBotCommand(message.channel_id, `,uwulock add <@${attackerId}>`);
+                        }
+                    }
+                }
+            }
         }
+    }
+
+    // 7. Lock failsafe: a watched user's message surviving 8 seconds means Greed isn't deleting it, so lock again.
+    if (settings.store.enableAutoUwulock && settings.store.enableLockFailsafe && guildId) {
+        armLockFailsafe(message, getAutoUwulockIds());
     }
 }
 
 export default definePlugin({
     name: "GreedCmds",
-    description: "Greed bot auto defense. Re-adds uwulock protect, removes uwulock, counters kick/ban/mute/to attacks, and keeps /autouwulock users locked. Supports protected users and allowed servers filtering.",
+    description: "Greed bot auto defense. Re-adds uwulock protect, removes uwulock, counters kick/ban/mute/to attacks, keeps /autouwulock users locked, spreads the lock to admins who unlock them, strips protect when Greed refuses a lock, and re-locks watched users whose messages stop being deleted. Supports protected users and allowed servers filtering.",
     authors: [TestcordDevs.x2b],
     settings,
 
@@ -308,6 +444,15 @@ export default definePlugin({
         MESSAGE_CREATE(data: any) {
             const message = data?.message ?? data;
             if (message) handleMessage(message);
+        },
+        MESSAGE_DELETE(data: any) {
+            if (data) handleDelete(data);
         }
+    },
+
+    stop() {
+        for (const pending of failsafePending.values()) clearTimeout(pending.timeout);
+        failsafePending.clear();
+        failsafeLastRetry.clear();
     }
 });
