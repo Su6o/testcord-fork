@@ -6,6 +6,7 @@
 
 import { HeaderBarButton } from "@api/HeaderBar";
 import { definePluginSettings } from "@api/Settings";
+import { TestcordDevs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
 import { openModal, React } from "@webpack/common";
 
@@ -58,9 +59,9 @@ function TempMailButton() {
 export default definePlugin({
     id: "tempMail",
     name: "TempMail",
-    description: "Disposable email inbox inside Discord — 5 providers (Mail.tm, Mail.gw, 1SecMail, Guerrilla Mail, TempMail.lol) with Testcord styled UI, search, and auto-refresh.",
+    description: "Email client inside Discord.",
     tags: ["Utility", "Privacy"],
-    authors: [{ name: "lastclipped", id: 0n }],
+    authors: [TestcordDevs.sirphantom89],
     dependencies: ["HeaderBarAPI"],
     settings,
 
