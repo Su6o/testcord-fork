@@ -12,7 +12,7 @@ import definePlugin, { OptionType } from "@utils/types";
 import type { User } from "@vencord/discord-types";
 import { React } from "@webpack/common";
 
-import { getAllPresence, putPresenceBatch } from "./db";
+import { delPresenceBatch, getAllPresence, putPresenceBatch } from "./db";
 
 const log = new Logger("LastOnline");
 const LEGACY_DATASTORE_KEY = "LastOnline_onlineList";
@@ -24,6 +24,21 @@ const settings = definePluginSettings({
         description: "Also show the last online indicator in server member lists",
         default: false,
         restartNeeded: true
+    },
+    persistAcrossRestarts: {
+        type: OptionType.BOOLEAN,
+        description: "Save last online times to a local database so they stay accurate across restarts",
+        default: true,
+        onChange(newValue: boolean) {
+            if (newValue) {
+                void loadOnlineList();
+            } else if (saveTimer !== null) {
+                clearTimeout(saveTimer);
+                saveTimer = null;
+                dirtyEntries.clear();
+                pendingDeletes.clear();
+            }
+        }
     }
 });
 
@@ -34,6 +49,7 @@ interface PresenceStatus {
 
 const recentlyOnlineList: Map<string, PresenceStatus> = new Map();
 const dirtyEntries = new Map<string, PresenceStatus>();
+const pendingDeletes = new Set<string>();
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
 function pruneOnlineList() {
@@ -41,13 +57,15 @@ function pruneOnlineList() {
     for (const [userId, status] of recentlyOnlineList) {
         if (status.lastOffline !== null && now - status.lastOffline > MAX_DISPLAY_AGE) {
             recentlyOnlineList.delete(userId);
-            dirtyEntries.set(userId, status);
+            dirtyEntries.delete(userId);
+            pendingDeletes.add(userId);
         }
     }
 }
 
 // Batch presence writes into a single idb transaction so bursts of updates cost one write
 function saveOnlineList() {
+    if (!settings.store.persistAcrossRestarts) return;
     if (saveTimer !== null) return;
     saveTimer = setTimeout(() => {
         saveTimer = null;
@@ -57,13 +75,25 @@ function saveOnlineList() {
 }
 
 function flushWrites() {
-    if (!dirtyEntries.size) return;
+    if (!settings.store.persistAcrossRestarts) {
+        dirtyEntries.clear();
+        pendingDeletes.clear();
+        return;
+    }
     const entries = [...dirtyEntries];
     dirtyEntries.clear();
-    putPresenceBatch(entries).catch(e => log.error("Failed to save presence to idb:", e));
+    const deletes = [...pendingDeletes];
+    pendingDeletes.clear();
+    if (entries.length) {
+        putPresenceBatch(entries).catch(e => log.error("Failed to save presence to idb:", e));
+    }
+    if (deletes.length) {
+        delPresenceBatch(deletes).catch(e => log.error("Failed to delete presence from idb:", e));
+    }
 }
 
 async function loadOnlineList() {
+    if (!settings.store.persistAcrossRestarts) return;
     try {
         const storedData = await getAllPresence();
         for (const [userId, status] of Object.entries(storedData)) {
@@ -111,9 +141,12 @@ function handlePresenceUpdate(status: string, userId: string) {
             changed = true;
         }
     } else {
+        // Never seen before. If first sighting is offline we don't know when
+        // they went offline, so don't record a bogus "just now" timestamp.
+        if (status === "offline") return;
         recentlyOnlineList.set(userId, {
-            hasBeenOnline: status !== "offline",
-            lastOffline: status === "offline" ? Date.now() : null
+            hasBeenOnline: true,
+            lastOffline: null
         });
         changed = true;
     }

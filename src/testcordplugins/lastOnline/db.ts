@@ -46,3 +46,13 @@ export async function putPresenceBatch(entries: Array<[string, PresenceStatus]>)
         tx.done
     ]);
 }
+
+export async function delPresenceBatch(userIds: Array<string>) {
+    if (!userIds.length) return;
+    const db = await getDb();
+    const tx = db.transaction("presence", "readwrite");
+    await Promise.all([
+        ...userIds.map(userId => tx.store.delete(userId)),
+        tx.done
+    ]);
+}
