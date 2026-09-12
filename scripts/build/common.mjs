@@ -183,6 +183,7 @@ export const globPlugins = (kind) => ({
             let metaCode = "\n";
             let excludedCode = "\n";
             let i = 0;
+            const seenPluginIds = new Set();
             for (const dir of pluginDirs) {
                 const userPlugin = dir === "userplugins";
 
@@ -234,22 +235,95 @@ export const globPlugins = (kind) => ({
                     }
 
                     const folderName = `src/${dir}/${fileName}`;
+                    const rawStem = fileName
+                        .replace(/\.[jt]sx?$/, "")
+                        .replace(/\.(desktop|web|discordDesktop|dev|browser|equibop)$/, "")
+                        .replace(/[^a-zA-Z0-9_-]/g, "");
+
+                    let fallbackId = rawStem || `plugin_${i}`;
+                    if (seenPluginIds.has(fallbackId.toLowerCase())) {
+                        fallbackId = `${dir.replace(/[^a-zA-Z0-9]/g, "")}_${fallbackId}`;
+                    }
+                    while (seenPluginIds.has(fallbackId.toLowerCase())) {
+                        fallbackId = `${fallbackId}_${i}`;
+                    }
+                    seenPluginIds.add(fallbackId.toLowerCase());
 
                     const mod = `p${i}`;
                     code += `import ${mod} from "./${dir}/${fileName.replace(
                         /\.tsx?$/,
                         "",
                     )}";\n`;
+                    code += `${mod}.id = ${mod}.id || ${JSON.stringify(fallbackId)};\n`;
                     pluginsCode += `[${mod}.name]:${mod},\n`;
                     // Expose stable id in PluginMeta for tooling and migrations
                     metaCode += `[${mod}.name]:{...${JSON.stringify({
                         folderName,
                         userPlugin,
-                    })},id:(${mod}.id??${mod}.name),aliases:(${mod}.aliases??[])},\n`;
+                    })},id:${mod}.id,aliases:(${mod}.aliases??[])},\n`;
                     i++;
                 }
             }
-            code += `export default {${pluginsCode}};export const PluginMeta={${metaCode}};export const ExcludedPlugins={${excludedCode}};`;
+            code += `
+const rawPlugins = {${pluginsCode}};
+const pluginLookup = new Map();
+for (const p of Object.values(rawPlugins)) {
+    if (p.id) {
+        pluginLookup.set(p.id, p);
+        pluginLookup.set(p.id.toLowerCase(), p);
+    }
+    if (p.name) {
+        pluginLookup.set(p.name, p);
+        pluginLookup.set(p.name.toLowerCase(), p);
+    }
+    if (Array.isArray(p.aliases)) {
+        for (const a of p.aliases) {
+            pluginLookup.set(a, p);
+            pluginLookup.set(a.toLowerCase(), p);
+        }
+    }
+}
+const plugins = new Proxy(rawPlugins, {
+    get(target, prop) {
+        if (typeof prop !== "string" || prop in target) return target[prop];
+        if (prop === "then") return undefined;
+        return pluginLookup.get(prop) ?? pluginLookup.get(prop.toLowerCase());
+    },
+    has(target, prop) {
+        if (typeof prop !== "string" || prop in target) return true;
+        return pluginLookup.has(prop) || pluginLookup.has(prop.toLowerCase());
+    }
+});
+export default plugins;
+
+const rawMeta = {${metaCode}};
+const metaLookup = new Map();
+for (const [name, meta] of Object.entries(rawMeta)) {
+    metaLookup.set(name, meta);
+    metaLookup.set(name.toLowerCase(), meta);
+    if (meta.id) {
+        metaLookup.set(meta.id, meta);
+        metaLookup.set(meta.id.toLowerCase(), meta);
+    }
+    if (Array.isArray(meta.aliases)) {
+        for (const a of meta.aliases) {
+            metaLookup.set(a, meta);
+            metaLookup.set(a.toLowerCase(), meta);
+        }
+    }
+}
+export const PluginMeta = new Proxy(rawMeta, {
+    get(target, prop) {
+        if (typeof prop !== "string" || prop in target) return target[prop];
+        return metaLookup.get(prop) ?? metaLookup.get(prop.toLowerCase());
+    },
+    has(target, prop) {
+        if (typeof prop !== "string" || prop in target) return true;
+        return metaLookup.has(prop) || metaLookup.has(prop.toLowerCase());
+    }
+});
+export const ExcludedPlugins = {${excludedCode}};
+`;
 
             return {
                 contents: code,

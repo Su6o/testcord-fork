@@ -19,19 +19,19 @@
  * does not orphan the enabled flag.
  */
 
-const ID_COMMENT_RE = /@id\s+([a-z0-9_-]+)|id:\s*([a-z0-9_-]+)/i;
+const ID_COMMENT_RE = /(?:^|\n)\s*(?:\*\s*)?(?:@id[:\s]+|id:\s*)([a-z0-9_.-]+)/i;
 
 export function parseThemeIdFromCss(css: string, fallbackFileName: string): string {
     const m = ID_COMMENT_RE.exec(css);
-    const declared = m?.[1] ?? m?.[2];
+    const declared = m?.[1];
     if (declared) return declared.toLowerCase();
-    return fallbackFileName.replace(/\.css$/i, "").toLowerCase();
+    return fallbackFileName.replace(/\.theme\.css$/i, "").replace(/\.css$/i, "").toLowerCase();
 }
 
 export function themeFileToId(fileName: string): string {
-    return fileName.replace(/\.css$/i, "").toLowerCase();
+    return fileName.replace(/\.theme\.css$/i, "").replace(/\.css$/i, "").toLowerCase();
 }
 
 export function isThemeId(value: string): boolean {
-    return /^[a-z0-9_-]+$/.test(value) && !value.includes("/") && !value.includes(".");
+    return /^[a-z0-9_.-]+$/i.test(value) && !value.includes("/") && !value.endsWith(".css");
 }

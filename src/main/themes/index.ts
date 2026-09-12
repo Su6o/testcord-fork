@@ -38,7 +38,7 @@ export interface UserThemeHeader {
 }
 
 function makeHeader(fileName: string, opts: Partial<UserThemeHeader> = {}): UserThemeHeader {
-    const fallbackId = fileName.replace(/\.css$/i, "").toLowerCase();
+    const fallbackId = fileName.replace(/\.theme\.css$/i, "").replace(/\.css$/i, "").toLowerCase();
     return {
         fileName,
         id: (opts as any).id?.toLowerCase() ?? fallbackId,

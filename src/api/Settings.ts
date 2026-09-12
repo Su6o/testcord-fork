@@ -19,21 +19,11 @@
 import { SettingsStore as SettingsStoreClass } from "@shared/SettingsStore";
 import { Logger } from "@utils/Logger";
 import { mergeDefaults } from "@utils/mergeDefaults";
+import { findPlugin } from "@utils/pluginIds";
 import { DefinedSettings, OptionType, SettingsChecks, SettingsDefinition } from "@utils/types";
 import { React, useEffect } from "@webpack/common";
 
 import plugins from "~plugins";
-
-function findPluginByIdOrName(idOrName: string) {
-    if (idOrName in plugins) return (plugins as any)[idOrName];
-    for (const p of Object.values(plugins as any)) {
-        const canonical = (p as any).id ?? (p as any).name;
-        if (canonical === idOrName) return p;
-        if ((p as any).aliases?.includes(idOrName)) return p;
-        if ((p as any).name === idOrName) return p;
-    }
-    return undefined;
-}
 
 const logger = new Logger("Settings");
 
@@ -185,18 +175,37 @@ export const SettingsStore = new SettingsStoreClass(settings, {
         if (!plugins) return v; // plugins not initialised yet. this means this path was reached by being called on the top level
 
         if (path === "plugins") {
-            const pl = findPluginByIdOrName(key);
-            if (pl)
+            const pl = findPlugin(key, plugins as any);
+            if (pl) {
+                const cid = (pl as any).id ?? (pl as any).name;
+                if (cid !== key && target[cid]) {
+                    return target[cid];
+                }
+                if (cid === key && (pl as any).name !== key && target[(pl as any).name]) {
+                    const legacyVal = target[(pl as any).name];
+                    delete target[(pl as any).name];
+                    return target[key] = legacyVal;
+                }
+                if (cid === key && Array.isArray((pl as any).aliases)) {
+                    for (const a of (pl as any).aliases) {
+                        if (target[a]) {
+                            const aVal = target[a];
+                            delete target[a];
+                            return target[key] = aVal;
+                        }
+                    }
+                }
                 return target[key] = {
                     enabled: IS_REPORTER || (pl as any).required || (pl as any).enabledByDefault || false
                 };
+            }
         }
 
         // Since the property is not set, check if this is a plugin's setting and if so, try to resolve
         // the default value.
         if (path.startsWith("plugins.")) {
             const pluginId = path.slice("plugins.".length);
-            const pl = findPluginByIdOrName(pluginId);
+            const pl = findPlugin(pluginId, plugins as any);
             if (pl) {
                 const setting = (pl as any).settings?.def[key];
                 if (!setting) return v;
@@ -412,7 +421,8 @@ export function definePluginSettings<
         },
         get plain() {
             if (!definedSettings.pluginName) throw new Error("Cannot access settings before plugin is initialized");
-            return PlainSettings.plugins[definedSettings.pluginName] as any;
+            const name = definedSettings.pluginName;
+            return (PlainSettings.plugins[name] ?? (Settings.plugins[name], PlainSettings.plugins[name])) as any;
         },
         use: settings => useSettings((
             settings
@@ -423,7 +433,7 @@ export function definePluginSettings<
         pluginName: "",
 
         withPrivateSettings<T extends object>() {
-            return this as DefinedSettings<Def, T>;
+            return this as unknown as DefinedSettings<Def, T>;
         }
     };
 

@@ -39,6 +39,10 @@ export function buildAliasMap(plugins: Record<string, Plugin>): Map<string, stri
         if (plugin.id && plugin.id !== plugin.name) map.set(plugin.name, canonical);
         for (const alias of (plugin as any).aliases ?? []) {
             map.set(alias, canonical);
+            map.set(alias.toLowerCase(), canonical);
+        }
+        if (plugin.id) {
+            map.set(plugin.id.toLowerCase(), canonical);
         }
         // also map lowercase variants to be forgiving
         if (plugin.id && plugin.id !== plugin.name.toLowerCase()) {
@@ -49,5 +53,16 @@ export function buildAliasMap(plugins: Record<string, Plugin>): Map<string, stri
 }
 
 export function resolvePluginId(raw: string, aliasMap: Map<string, string>): string {
-    return aliasMap.get(raw) ?? raw;
+    return aliasMap.get(raw) ?? aliasMap.get(raw.toLowerCase()) ?? raw;
+}
+
+export function findPlugin(idOrName: string, plugins: Record<string, Plugin>): Plugin | undefined {
+    if (idOrName in plugins) return plugins[idOrName];
+    const lower = idOrName.toLowerCase();
+    for (const p of Object.values(plugins)) {
+        if (p.id === idOrName || p.name === idOrName) return p;
+        if (p.id?.toLowerCase() === lower || p.name?.toLowerCase() === lower) return p;
+        if ((p as any).aliases?.includes(idOrName) || (p as any).aliases?.some((a: string) => a.toLowerCase() === lower)) return p;
+    }
+    return undefined;
 }

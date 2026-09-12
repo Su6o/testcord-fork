@@ -91,7 +91,10 @@ async function buildThemeIdMap(): Promise<Map<string, string>> {
 function resolveThemeFile(entry: string, map: Map<string, string>): string {
     const lower = entry.toLowerCase();
     if (map.has(lower)) return map.get(lower)!;
-    // entry may be id without extension; try with .css
+    const stripped = lower.replace(/\.theme\.css$/i, "").replace(/\.css$/i, "");
+    if (map.has(stripped)) return map.get(stripped)!;
+    if (map.has(stripped + ".theme.css")) return map.get(stripped + ".theme.css")!;
+    if (map.has(stripped + ".css")) return map.get(stripped + ".css")!;
     if (!lower.endsWith(".css") && map.has(lower + ".css")) return map.get(lower + ".css")!;
     return entry;
 }
@@ -123,6 +126,27 @@ async function initThemes() {
 
     // Build id → file map once per init; on web themes are fetched by entry as-is
     const idMap = IS_WEB ? new Map<string, string>() : await buildThemeIdMap();
+
+    // Migrate enabledThemes from legacy filenames to stable IDs on startup
+    if (!IS_WEB && enabledThemes?.length) {
+        let changed = false;
+        const newEnabled = enabledThemes.map(entry => {
+            const resolved = resolveThemeFile(entry, idMap);
+            for (const [id, targetFile] of idMap.entries()) {
+                if (targetFile.toLowerCase() === resolved.toLowerCase() && !id.endsWith(".css")) {
+                    if (entry !== id) {
+                        changed = true;
+                        return id;
+                    }
+                    return id;
+                }
+            }
+            return entry;
+        });
+        if (changed) {
+            Settings.enabledThemes = Array.from(new Set(newEnabled));
+        }
+    }
 
     if (IS_WEB) {
         previousThemeBlobObjectURLs.forEach(url => URL.revokeObjectURL(url));

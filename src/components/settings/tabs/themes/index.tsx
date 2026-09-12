@@ -17,6 +17,7 @@ import { classNameFactory } from "@utils/css";
 import { copyWithToast } from "@utils/discord";
 import { Margins } from "@utils/margins";
 import { classes } from "@utils/misc";
+import { themeFileToId } from "@utils/themeIds";
 import { getStylusWebStoreUrl } from "@utils/web";
 import { openModal, React, Select, showToast, TextInput, Toasts, useEffect, useMemo, useRef, useState } from "@webpack/common";
 import { SyntheticEvent } from "react";
@@ -124,12 +125,18 @@ function ThemesTab() {
         setUserThemes(themes);
     }
 
-    function onLocalThemeChange(fileName: string, value: boolean) {
+    function onLocalThemeChange(fileNameOrHeader: string | UserThemeHeader, value: boolean) {
+        const header = typeof fileNameOrHeader === "string"
+            ? userThemes?.find(t => t.fileName === fileNameOrHeader)
+            : fileNameOrHeader;
+        const fileName = typeof fileNameOrHeader === "string" ? fileNameOrHeader : fileNameOrHeader.fileName;
+        const id = header?.id ?? themeFileToId(fileName);
+
         if (value) {
-            if (settings.enabledThemes.includes(fileName)) return;
-            settings.enabledThemes = [...settings.enabledThemes, fileName];
+            if (settings.enabledThemes.includes(id) || settings.enabledThemes.includes(fileName)) return;
+            settings.enabledThemes = [...settings.enabledThemes, id];
         } else {
-            settings.enabledThemes = settings.enabledThemes.filter(f => f !== fileName);
+            settings.enabledThemes = settings.enabledThemes.filter(f => f !== id && f !== fileName);
         }
     }
 
@@ -351,13 +358,15 @@ function ThemesTab() {
 
         for (const header of userThemes ?? []) {
             const name = header.name ?? header.fileName;
+            const id = header.id ?? themeFileToId(header.fileName);
+            const isEnabled = settings.enabledThemes.includes(id) || settings.enabledThemes.includes(header.fileName);
 
             themes.push({
                 type: "local",
                 name,
-                enabled: settings.enabledThemes.includes(header.fileName),
+                enabled: isEnabled,
                 header,
-                activationMode: settings.themeActivationModes?.[header.fileName] ?? "always",
+                activationMode: settings.themeActivationModes?.[header.fileName] ?? settings.themeActivationModes?.[id] ?? "always",
             });
         }
 
@@ -543,9 +552,9 @@ function ThemesTab() {
                             <ThemeCard
                                 key={localTheme.fileName}
                                 enabled={theme.enabled}
-                                onChange={enabled => onLocalThemeChange(localTheme.fileName, enabled)}
+                                onChange={enabled => onLocalThemeChange(localTheme, enabled)}
                                 onDelete={async () => {
-                                    onLocalThemeChange(localTheme.fileName, false);
+                                    onLocalThemeChange(localTheme, false);
                                     clearThemeState(localTheme.fileName);
                                     await VencordNative.themes.deleteTheme(localTheme.fileName);
                                     refreshLocalThemes();

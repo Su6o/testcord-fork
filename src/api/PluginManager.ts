@@ -70,16 +70,29 @@ export function isPluginEnabled(p: string) {
     const plugin = (Plugins as any)[p];
     const canonical = plugin ? getPluginId(plugin) : p;
     // allow lookup by either canonical id or legacy name for backwards compat
-    const legacy = p !== canonical ? p : null;
+    const legacy = plugin?.name && plugin.name !== canonical ? plugin.name : (p !== canonical ? p : null);
     if (plugin?.required) return true;
     if (PluginHealth.isSafeModeEnabled()) return false;
     if (PluginHealth.isQuarantined(canonical) || (legacy && PluginHealth.isQuarantined(legacy))) return false;
 
-    return (
-        plugin?.isDependency ||
-        Settings.plugins[canonical]?.enabled ||
-        (legacy ? Settings.plugins[legacy]?.enabled : false)
-    ) ?? false;
+    if (plugin?.isDependency) return true;
+
+    const canonicalEnabled = Settings.plugins[canonical]?.enabled;
+    if (canonicalEnabled !== undefined) return canonicalEnabled;
+
+    if (legacy && Settings.plugins[legacy]?.enabled !== undefined) {
+        return Settings.plugins[legacy].enabled;
+    }
+
+    if ((plugin as any)?.aliases) {
+        for (const alias of (plugin as any).aliases) {
+            if (Settings.plugins[alias]?.enabled !== undefined) {
+                return Settings.plugins[alias].enabled;
+            }
+        }
+    }
+
+    return false;
 }
 export function isPluginRequired(p: string) {
     return (
@@ -211,16 +224,21 @@ export function startDependenciesRecursive(p: Plugin) {
     const failures: string[] = [];
 
     p.dependencies?.forEach(d => {
-        const canonicalD = (Plugins as any)[d] ? getPluginId((Plugins as any)[d]) : d;
-        const enabled = Settings.plugins[canonicalD]?.enabled ?? Settings.plugins[d]?.enabled;
+        const dep = (Plugins as any)[d];
+        const canonicalD = dep ? getPluginId(dep) : d;
+        const enabled = isPluginEnabled(canonicalD) || isPluginEnabled(d);
         if (!enabled) {
-            const dep = (Plugins as any)[d] ?? (Plugins as any)[canonicalD];
-            if (!dep) return;
+            if (!dep) {
+                logger.warn(`Plugin ${p.name} has unresolved dependency ${d}`);
+                return;
+            }
             startDependenciesRecursive(dep);
 
             // If the plugin has patches, don't start the plugin, just enable it.
             (Settings.plugins as any)[canonicalD] = (Settings.plugins as any)[canonicalD] ?? {};
             (Settings.plugins as any)[canonicalD].enabled = true;
+            (Settings.plugins as any)[d] = (Settings.plugins as any)[d] ?? {};
+            (Settings.plugins as any)[d].enabled = true;
             dep.isDependency = true;
 
             if (pluginRequiresRestart(dep)) {
@@ -485,18 +503,19 @@ export const initPluginManager = onlyOnce(function init() {
     // from the old `name` key to the new `id` key if the latter is empty.
     for (const p of pluginsValues) {
         const cid = getPluginId(p);
-        if (cid !== p.name) {
-            const legacy = (Settings.plugins as any)[p.name];
-            const canonical = (Settings.plugins as any)[cid];
-            if (legacy && !canonical) {
-                (Settings.plugins as any)[cid] = legacy;
-            } else if (legacy && canonical && legacy.enabled !== undefined && canonical.enabled === undefined) {
-                canonical.enabled = legacy.enabled;
-            }
-            // alias migration
-            for (const alias of (p as any).aliases ?? []) {
-                const aVal = (Settings.plugins as any)[alias];
-                if (aVal && !(Settings.plugins as any)[cid]) (Settings.plugins as any)[cid] = aVal;
+        if (p.settings) p.settings.pluginName = cid;
+
+        const legacy = (Settings.plugins as any)[p.name];
+        if (cid !== p.name && legacy) {
+            const canonical = (Settings.plugins as any)[cid] ?? {};
+            (Settings.plugins as any)[cid] = { ...legacy, ...canonical };
+        }
+        // alias migration
+        for (const alias of (p as any).aliases ?? []) {
+            const aVal = (Settings.plugins as any)[alias];
+            if (aVal) {
+                const canonical = (Settings.plugins as any)[cid] ?? {};
+                (Settings.plugins as any)[cid] = { ...aVal, ...canonical };
             }
         }
     }
@@ -530,7 +549,11 @@ export const initPluginManager = onlyOnce(function init() {
                 return;
             }
 
-            settings[d].enabled = true;
+            const cid = getPluginId(dep);
+            (Settings.plugins as any)[cid] = (Settings.plugins as any)[cid] ?? {};
+            (Settings.plugins as any)[cid].enabled = true;
+            (Settings.plugins as any)[d] = (Settings.plugins as any)[d] ?? {};
+            (Settings.plugins as any)[d].enabled = true;
             dep.isDependency = true;
         });
 
