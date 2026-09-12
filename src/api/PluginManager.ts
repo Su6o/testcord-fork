@@ -28,7 +28,7 @@ import { addMessagePopoverButton, removeMessagePopoverButton } from "@api/Messag
 import { addNicknameIcon, removeNicknameIcon } from "@api/NicknameIcons";
 import { PluginHealth } from "@api/PluginHealth";
 import { PluginProfiler } from "@api/PluginProfiler";
-import { Settings, SettingsStore } from "@api/Settings";
+import { PlainSettings, Settings, SettingsStore } from "@api/Settings";
 import { disableStyle, enableStyle, removeStyle } from "@api/Styles";
 import { traceFunction } from "@debug/Tracer";
 import { Logger } from "@utils/Logger";
@@ -76,6 +76,18 @@ export function isPluginEnabled(p: string) {
     if (PluginHealth.isQuarantined(canonical) || (legacy && PluginHealth.isQuarantined(legacy))) return false;
 
     if (plugin?.isDependency) return true;
+
+    // Check raw plain settings first so we do not trigger default value generation
+    const raw = PlainSettings?.plugins as Record<string, any> | undefined;
+    if (raw) {
+        if (raw[canonical]?.enabled !== undefined) return raw[canonical].enabled;
+        if (legacy && raw[legacy]?.enabled !== undefined) return raw[legacy].enabled;
+        if ((plugin as any)?.aliases) {
+            for (const alias of (plugin as any).aliases) {
+                if (raw[alias]?.enabled !== undefined) return raw[alias].enabled;
+            }
+        }
+    }
 
     const canonicalEnabled = Settings.plugins[canonical]?.enabled;
     if (canonicalEnabled !== undefined) return canonicalEnabled;
@@ -505,17 +517,22 @@ export const initPluginManager = onlyOnce(function init() {
         const cid = getPluginId(p);
         if (p.settings) p.settings.pluginName = cid;
 
-        const legacy = (Settings.plugins as any)[p.name];
-        if (cid !== p.name && legacy) {
-            const canonical = (Settings.plugins as any)[cid] ?? {};
-            (Settings.plugins as any)[cid] = { ...legacy, ...canonical };
+        if (cid !== p.name) {
+            const raw = PlainSettings?.plugins as Record<string, any> | undefined;
+            const legacy = raw?.[p.name];
+            const canonical = raw?.[cid];
+            if (legacy && !canonical) {
+                (Settings.plugins as any)[cid] = { ...legacy };
+            } else if (legacy && canonical && legacy.enabled !== undefined && canonical.enabled === undefined) {
+                (Settings.plugins as any)[cid].enabled = legacy.enabled;
+            }
         }
         // alias migration
         for (const alias of (p as any).aliases ?? []) {
-            const aVal = (Settings.plugins as any)[alias];
-            if (aVal) {
-                const canonical = (Settings.plugins as any)[cid] ?? {};
-                (Settings.plugins as any)[cid] = { ...aVal, ...canonical };
+            const raw = PlainSettings?.plugins as Record<string, any> | undefined;
+            const aVal = raw?.[alias];
+            if (aVal && !raw?.[cid]) {
+                (Settings.plugins as any)[cid] = { ...aVal };
             }
         }
     }

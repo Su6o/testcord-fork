@@ -124,28 +124,17 @@ export function PluginCard({ plugin, disabled, onRestartNeeded, onMouseEnter, on
     const isEnabled = () => isPluginEnabled(plugin.name);
 
     function doToggle(wasEnabled: boolean) {
-        // Initialize settings if they don't exist (for BD plugins)
-        if (!settings) {
-            (Settings.plugins as any)[canonicalId] = { enabled: !wasEnabled };
-            void PluginHealth.recordPluginChange(canonicalId, !wasEnabled);
-            // For BD plugins, also trigger the start/stop
-            if (!wasEnabled) {
-                startPlugin(plugin);
-            } else {
-                stopPlugin(plugin);
-            }
-            return;
-        }
+        const nextEnabled = !wasEnabled;
 
-        // Ensure canonical settings object exists (migrate legacy → id)
-        const ensureTarget = () => {
-            const cur = (Settings.plugins as any)[canonicalId];
-            if (cur) return cur;
-            const legacy = (Settings.plugins as any)[plugin.name];
-            (Settings.plugins as any)[canonicalId] = legacy ? { ...legacy } : { enabled: !!settings?.enabled };
-            return (Settings.plugins as any)[canonicalId];
+        const setEnabledState = (enabled: boolean) => {
+            (Settings.plugins as any)[canonicalId] = (Settings.plugins as any)[canonicalId] ?? {};
+            (Settings.plugins as any)[canonicalId].enabled = enabled;
+            if (canonicalId !== plugin.name) {
+                (Settings.plugins as any)[plugin.name] = (Settings.plugins as any)[plugin.name] ?? {};
+                (Settings.plugins as any)[plugin.name].enabled = enabled;
+            }
+            void PluginHealth.recordPluginChange(canonicalId, enabled);
         };
-        const target = ensureTarget();
 
         // If we're enabling a plugin, make sure all deps are enabled recursively.
         if (!wasEnabled) {
@@ -159,8 +148,7 @@ export function PluginCard({ plugin, disabled, onRestartNeeded, onMouseEnter, on
 
             if (restartNeeded) {
                 // If any dependencies have patches, don't start the plugin yet.
-                target.enabled = true;
-                void PluginHealth.recordPluginChange(canonicalId, true);
+                setEnabledState(true);
                 onRestartNeeded(plugin.name, "enabled");
                 return;
             }
@@ -168,35 +156,30 @@ export function PluginCard({ plugin, disabled, onRestartNeeded, onMouseEnter, on
 
         // if the plugin requires a restart, don't use stopPlugin/startPlugin. Wait for restart to apply changes.
         if (pluginRequiresRestart(plugin)) {
-            target.enabled = !wasEnabled;
-            void PluginHealth.recordPluginChange(canonicalId, !wasEnabled);
+            setEnabledState(nextEnabled);
             onRestartNeeded(plugin.name, "enabled");
             return;
         }
 
         // If the plugin is enabled, but hasn't been started, then we can just toggle it off.
         if (wasEnabled && !plugin.started) {
-            target.enabled = !wasEnabled;
-            void PluginHealth.recordPluginChange(canonicalId, false);
+            setEnabledState(false);
             return;
         }
+
+        // Set state in settings before starting so startup checks see it enabled
+        setEnabledState(nextEnabled);
 
         const result = wasEnabled ? stopPlugin(plugin) : startPlugin(plugin);
 
         if (!result) {
-            target.enabled = false;
-            void PluginHealth.recordPluginChange(canonicalId, false);
+            setEnabledState(wasEnabled);
 
             const msg = `Error while ${wasEnabled ? "stopping" : "starting"} plugin ${plugin.name}`;
             showToast(msg, Toasts.Type.FAILURE, {
                 position: Toasts.Position.BOTTOM,
             });
-
-            return;
         }
-
-        target.enabled = !wasEnabled;
-        void PluginHealth.recordPluginChange(canonicalId, !wasEnabled);
     }
 
     function toggleEnabled() {

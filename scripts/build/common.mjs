@@ -183,7 +183,6 @@ export const globPlugins = (kind) => ({
             let metaCode = "\n";
             let excludedCode = "\n";
             let i = 0;
-            const seenPluginIds = new Set();
             for (const dir of pluginDirs) {
                 const userPlugin = dir === "userplugins";
 
@@ -235,32 +234,17 @@ export const globPlugins = (kind) => ({
                     }
 
                     const folderName = `src/${dir}/${fileName}`;
-                    const rawStem = fileName
-                        .replace(/\.[jt]sx?$/, "")
-                        .replace(/\.(desktop|web|discordDesktop|dev|browser|equibop)$/, "")
-                        .replace(/[^a-zA-Z0-9_-]/g, "");
-
-                    let fallbackId = rawStem || `plugin_${i}`;
-                    if (seenPluginIds.has(fallbackId.toLowerCase())) {
-                        fallbackId = `${dir.replace(/[^a-zA-Z0-9]/g, "")}_${fallbackId}`;
-                    }
-                    while (seenPluginIds.has(fallbackId.toLowerCase())) {
-                        fallbackId = `${fallbackId}_${i}`;
-                    }
-                    seenPluginIds.add(fallbackId.toLowerCase());
-
                     const mod = `p${i}`;
                     code += `import ${mod} from "./${dir}/${fileName.replace(
                         /\.tsx?$/,
                         "",
                     )}";\n`;
-                    code += `${mod}.id = ${mod}.id || ${JSON.stringify(fallbackId)};\n`;
                     pluginsCode += `[${mod}.name]:${mod},\n`;
                     // Expose stable id in PluginMeta for tooling and migrations
                     metaCode += `[${mod}.name]:{...${JSON.stringify({
                         folderName,
                         userPlugin,
-                    })},id:${mod}.id,aliases:(${mod}.aliases??[])},\n`;
+                    })},id:(${mod}.id??${mod}.name),aliases:(${mod}.aliases??[])},\n`;
                     i++;
                 }
             }
@@ -292,6 +276,12 @@ const plugins = new Proxy(rawPlugins, {
     has(target, prop) {
         if (typeof prop !== "string" || prop in target) return true;
         return pluginLookup.has(prop) || pluginLookup.has(prop.toLowerCase());
+    },
+    ownKeys(target) {
+        return Reflect.ownKeys(target);
+    },
+    getOwnPropertyDescriptor(target, prop) {
+        return Reflect.getOwnPropertyDescriptor(target, prop);
     }
 });
 export default plugins;
@@ -320,6 +310,12 @@ export const PluginMeta = new Proxy(rawMeta, {
     has(target, prop) {
         if (typeof prop !== "string" || prop in target) return true;
         return metaLookup.has(prop) || metaLookup.has(prop.toLowerCase());
+    },
+    ownKeys(target) {
+        return Reflect.ownKeys(target);
+    },
+    getOwnPropertyDescriptor(target, prop) {
+        return Reflect.getOwnPropertyDescriptor(target, prop);
     }
 });
 export const ExcludedPlugins = {${excludedCode}};

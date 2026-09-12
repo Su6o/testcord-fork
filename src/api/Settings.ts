@@ -178,24 +178,30 @@ export const SettingsStore = new SettingsStoreClass(settings, {
             const pl = findPlugin(key, plugins as any);
             if (pl) {
                 const cid = (pl as any).id ?? (pl as any).name;
-                if (cid !== key && target[cid]) {
+                const legacyName = (pl as any).name;
+
+                if (target[cid]) {
                     return target[cid];
                 }
-                if (cid === key && (pl as any).name !== key && target[(pl as any).name]) {
-                    const legacyVal = target[(pl as any).name];
-                    delete target[(pl as any).name];
-                    return target[key] = legacyVal;
+                if (legacyName && target[legacyName]) {
+                    const legacyVal = target[legacyName];
+                    if (cid !== legacyName) {
+                        delete target[legacyName];
+                        target[cid] = legacyVal;
+                    }
+                    return target[cid];
                 }
-                if (cid === key && Array.isArray((pl as any).aliases)) {
+                if (Array.isArray((pl as any).aliases)) {
                     for (const a of (pl as any).aliases) {
                         if (target[a]) {
                             const aVal = target[a];
                             delete target[a];
-                            return target[key] = aVal;
+                            target[cid] = aVal;
+                            return target[cid];
                         }
                     }
                 }
-                return target[key] = {
+                return target[cid] = {
                     enabled: IS_REPORTER || (pl as any).required || (pl as any).enabledByDefault || false
                 };
             }
