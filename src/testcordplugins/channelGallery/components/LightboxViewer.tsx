@@ -135,6 +135,18 @@ export function LightboxViewer(props: {
                 style={{
                     position: "absolute",
                     top: 12,
+                    left: 12,
+                    zIndex: 2
+                }}
+            >
+                <Button size={Button.Sizes.SMALL} onClick={onClose}>
+                    {"← Back"}
+                </Button>
+            </div>
+            <div
+                style={{
+                    position: "absolute",
+                    top: 12,
                     right: 12,
                     display: "flex",
                     gap: 8,
@@ -146,9 +158,6 @@ export function LightboxViewer(props: {
                 </Button>
                 <Button size={Button.Sizes.SMALL} onClick={jump}>
                     Open message
-                </Button>
-                <Button size={Button.Sizes.SMALL} onClick={onClose}>
-                    Close
                 </Button>
             </div>
             <div
