@@ -8,13 +8,13 @@ import { BaseText } from "@components/BaseText";
 import { Button } from "@components/Button";
 import { Card } from "@components/Card";
 import { Flex } from "@components/Flex";
-import { FormSwitch } from "@components/FormSwitch";
 import { Paragraph } from "@components/Paragraph";
+import { Switch } from "@components/Switch";
 import { React, TextInput, useMemo, useState } from "@webpack/common";
 
 import { MARKETPLACE_CATALOG } from "../builtin";
 import { getModuleIcon, SectionHeading } from "../icons";
-import { registerModule, setModuleEnabled, useModules } from "../registry";
+import { installModule, setModuleEnabled, uninstallModule, useModules } from "../registry";
 
 const CATEGORIES = [
     { id: "all", label: "All Modules" },
@@ -32,7 +32,7 @@ export function MarketplaceTab() {
     const installedModules = useModules();
     const installedMap = useMemo(() => {
         const map = new Map<string, boolean>();
-        installedModules.forEach(m => map.set(m.id, m.enabled));
+        installedModules.forEach(m => map.set(m.id, m.installed !== false));
         return map;
     }, [installedModules]);
 
@@ -189,7 +189,7 @@ export function MarketplaceTab() {
                                         size="small"
                                         variant="secondary"
                                         style={{ width: "100%" }}
-                                        onClick={() => void setModuleEnabled(item.id, false)}
+                                        onClick={() => void uninstallModule(item.id)}
                                     >
                                         Uninstall
                                     </Button>
@@ -198,11 +198,7 @@ export function MarketplaceTab() {
                                         size="small"
                                         variant="primary"
                                         style={{ width: "100%" }}
-                                        onClick={() => {
-                                            const mod = item.factory();
-                                            registerModule({ ...mod, enabled: true });
-                                            void setModuleEnabled(item.id, true);
-                                        }}
+                                        onClick={() => void installModule(item.id)}
                                     >
                                         Install Module
                                     </Button>
@@ -244,12 +240,12 @@ export function MarketplaceTab() {
                                             <BaseText size="xs" color="text-muted">{mod.description || "Custom module"}</BaseText>
                                         </div>
                                     </Flex>
-                                    <FormSwitch
-                                        title=""
-                                        value={mod.enabled}
-                                        onChange={v => setModuleEnabled(mod.id, v)}
-                                        hideBorder
-                                    />
+                                    <div style={{ display: "flex", alignItems: "center" }}>
+                                        <Switch
+                                            checked={mod.enabled}
+                                            onChange={v => setModuleEnabled(mod.id, v)}
+                                        />
+                                    </div>
                                 </Flex>
                             </Card>
                         ))}

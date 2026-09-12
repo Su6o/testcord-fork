@@ -8,12 +8,12 @@ import { Settings } from "@api/Settings";
 import { BaseText } from "@components/BaseText";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { Flex } from "@components/Flex";
-import { FormSwitch } from "@components/FormSwitch";
 import {
     AppsIcon as FallbackAppsIcon,
     ScreenshareIcon as FallbackScreenshareIcon,
     VideoIcon as FallbackVideoIcon,
 } from "@components/Icons";
+import { Switch } from "@components/Switch";
 import { iconsModule } from "@equicordplugins/_core/concatenatedModules";
 import { filters, find } from "@webpack";
 import {
@@ -99,6 +99,7 @@ import { MusicControlsComponent, SpotifyStore } from "../musicControls";
 import {
     getPanelLayoutPlainSettings,
     getUserAreaOrder,
+    isModuleInstalled,
     registeredModules,
     setUserAreaItemEnabled,
     setUserAreaOrder,
@@ -127,8 +128,12 @@ export function UserAreaReorderTab({
     const [activeDragIndex, setActiveDragIndex] = useState<number | null>(null);
     const [dropPosition, setDropPosition] = useState<"above" | "below">("above");
 
-    const isActivityBannerActive = modules.some(m => m.id === "activity-banner" && m.enabled);
+    const isActivityBannerActive = modules.some(m => m.id === "activity-banner" && m.enabled && m.installed !== false);
     const visibleItems = items.filter(it => {
+        if (it.type === "module") {
+            const targetId = it.moduleId || it.id;
+            if (!isModuleInstalled(targetId)) return false;
+        }
         if (isActivityBannerActive && it.id === "native-activity-banner") return false;
         if (!isActivityBannerActive && (it.id === "activity-banner" || it.moduleId === "activity-banner")) return false;
         return true;
@@ -525,8 +530,8 @@ export function UserAreaReorderTab({
                                         }}
                                         title={item.id === "voice-connected" || item.type === "voice-connected" ? "Configure Call Bar" : "Settings"}
                                         style={{
-                                            width: "28px",
-                                            height: "28px",
+                                            width: "26px",
+                                            height: "26px",
                                             borderRadius: "4px",
                                             backgroundColor: "transparent",
                                             color: "var(--interactive-normal)",
@@ -536,6 +541,7 @@ export function UserAreaReorderTab({
                                             alignItems: "center",
                                             justifyContent: "center",
                                             transition: "background-color 0.15s ease, color 0.15s ease",
+                                            padding: 0,
                                         }}
                                         onMouseEnter={e => {
                                             e.currentTarget.style.color = "var(--interactive-active)";
@@ -550,12 +556,12 @@ export function UserAreaReorderTab({
                                     </button>
                                 )}
 
-                                <FormSwitch
-                                    title=""
-                                    value={item.enabled}
-                                    onChange={v => toggleItem(item.id, v)}
-                                    hideBorder
-                                />
+                                <div style={{ display: "flex", alignItems: "center", marginLeft: "4px" }}>
+                                    <Switch
+                                        checked={item.enabled}
+                                        onChange={v => toggleItem(item.id, v)}
+                                    />
+                                </div>
                             </Flex>
                         </div>
                     );
@@ -1101,6 +1107,7 @@ function LiveAccountProfilePreview({ pluginSettings }: { pluginSettings?: any; }
                 boxSizing: "border-box",
                 borderRadius: "8px",
                 overflow: "hidden",
+                backgroundColor: "var(--background-secondary-alt, #111214)",
                 ...(nameplate?.neutral ? { "--custom-nameplate-neutral": nameplate.neutral } as any : {}),
                 ...(nameplate?.neutralHovered ? { "--custom-nameplate-neutral-hovered": nameplate.neutralHovered } as any : {}),
             }}
@@ -1128,8 +1135,19 @@ function LiveAccountProfilePreview({ pluginSettings }: { pluginSettings?: any; }
                             style={{
                                 width: "100%",
                                 height: "100%",
-                                objectFit: "unset",
-                                background: "linear-gradient(90deg, rgba(115, 11, 200, 0.1) 0%, rgba(115, 11, 200, 0.4) 100%)",
+                                objectFit: "cover",
+                                objectPosition: "center",
+                                display: "block",
+                            }}
+                        />
+                    ) : nameplate.src ? (
+                        <img
+                            src={nameplate.src}
+                            alt="Nameplate"
+                            style={{
+                                width: "100%",
+                                height: "100%",
+                                objectFit: "cover",
                                 objectPosition: "center",
                                 display: "block",
                             }}
@@ -1145,13 +1163,6 @@ function LiveAccountProfilePreview({ pluginSettings }: { pluginSettings?: any; }
                             }}
                         />
                     ) : null}
-                    <div
-                        style={{
-                            position: "absolute",
-                            inset: 0,
-                            backgroundColor: "rgba(0, 0, 0, 0.25)",
-                        }}
-                    />
                 </div>
             )}
 

@@ -10,12 +10,11 @@ import { SavedAccount as ProviderAccount, TmMessage } from "./providers";
 
 const ACCOUNTS_KEY = "TempMail_accounts_v2";
 const ACTIVE_KEY = "TempMail_activeId";
-const MESSAGES_KEY = "TempMail_messages"; // { [accountId]: TmMessage[] }
+const MESSAGES_KEY = "TempMail_messages";
 const LEGACY_ACCOUNTS_KEY = "TempMail_accounts";
 
 export type SavedAccount = ProviderAccount;
 
-// ── Migration from v1 (mail.tm only) ────────────────────────────────────────
 async function migrateIfNeeded(): Promise<void> {
     const v2 = await DataStore.get<SavedAccount[]>(ACCOUNTS_KEY);
     if (v2 != null) return;
@@ -34,7 +33,6 @@ async function migrateIfNeeded(): Promise<void> {
     await DataStore.set(ACCOUNTS_KEY, migrated);
 }
 
-// ── Accounts ──────────────────────────────────────────────────────────────────
 export async function getSavedAccounts(): Promise<SavedAccount[]> {
     await migrateIfNeeded();
     return (await DataStore.get<SavedAccount[]>(ACCOUNTS_KEY)) ?? [];
@@ -57,7 +55,6 @@ export async function removeAccount(id: string): Promise<void> {
     if (active === id) await DataStore.del(ACTIVE_KEY);
 }
 
-// ── Active account ────────────────────────────────────────────────────────────
 export async function getActiveId(): Promise<string | undefined> {
     return DataStore.get<string>(ACTIVE_KEY);
 }
@@ -66,7 +63,6 @@ export async function setActiveId(id: string): Promise<void> {
     await DataStore.set(ACTIVE_KEY, id);
 }
 
-// ── Saved messages (persisted per account) ────────────────────────────────────
 async function getAllSavedMessages(): Promise<Record<string, TmMessage[]>> {
     return (await DataStore.get<Record<string, TmMessage[]>>(MESSAGES_KEY)) ?? {};
 }
@@ -96,7 +92,6 @@ export async function deleteMessageFromStore(accountId: string, messageId: strin
     }
 }
 
-// ── Storage path (informational) ──────────────────────────────────────────────
 export function getDataStorePath(): string {
     try {
         const p = process?.env?.APPDATA ?? "";

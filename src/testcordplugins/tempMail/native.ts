@@ -43,7 +43,6 @@ export async function fetchTempMail(
             headers[k] = v;
         }
     }
-    // always allow json
     if (!headers["Content-Type"] && options.body) headers["Content-Type"] = "application/json";
 
     const res = await safeFetch(url, {

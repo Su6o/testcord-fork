@@ -7,10 +7,11 @@
 import "../styles.css";
 
 import { Button } from "@components/Button";
+import { CopyIcon, TrashIcon, UserIcon } from "@components/Icons";
 import { copyToClipboard } from "@utils/clipboard";
 import { classNameFactory } from "@utils/css";
 import type { RenderModalProps } from "@vencord/discord-types";
-import { Modal, React, ScrollerThin, showToast, TextInput, Toasts, Tooltip, useEffect, useRef, useState } from "@webpack/common";
+import { Modal, React, ScrollerThin, Select, showToast, Toasts, Tooltip, useEffect, useRef, useState } from "@webpack/common";
 
 import { settings } from "..";
 import { getProvider, providers, randomString, SavedAccount, TmMessage, TmMessageFull } from "../providers";
@@ -18,6 +19,58 @@ import { deleteMessageFromStore, getActiveId, getSavedAccounts, getSavedMessages
 
 const cl = classNameFactory("vc-tm-");
 type View = "inbox" | "message" | "new" | "accounts";
+
+function InboxIcon({ size = 16 }: { size?: number; }) {
+    return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+            <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+        </svg>
+    );
+}
+
+function MailIcon({ size = 16 }: { size?: number; }) {
+    return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+            <path d="M20 4H4C2.9 4 2 4.9 2 6v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4-8 5-8-5V6l8 5 8-5v2z" />
+        </svg>
+    );
+}
+
+function RefreshIcon({ size = 16 }: { size?: number; }) {
+    return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+        </svg>
+    );
+}
+
+function WarningIcon({ size = 14 }: { size?: number; }) {
+    return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+            <line x1="12" y1="9" x2="12" y2="13" />
+            <line x1="12" y1="17" x2="12.01" y2="17" />
+        </svg>
+    );
+}
+
+function CloseIcon({ size = 12 }: { size?: number; }) {
+    return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+    );
+}
+
+function CheckmarkIcon({ size = 10 }: { size?: number; }) {
+    return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="20 6 9 17 4 12" />
+        </svg>
+    );
+}
 
 function fmtDate(iso: string) {
     const d = new Date(iso);
@@ -204,16 +257,9 @@ export function TempMailModal({ modalProps }: { modalProps: RenderModalProps; })
     const activeProv = active ? getProvider(active.providerId) : null;
 
     return (
-        <Modal {...modalProps} size="lg" className={cl("modal-root")} title={<span className={cl("modal-title")}>Temp Mail <span className={cl("modal-title-sub")}>— Testcord Edition</span></span>}>
+        <Modal {...modalProps} size="lg" className={cl("modal-root")} title="Temp Mail">
             <div className={cl("shell")}>
-                {/* Sidebar */}
                 <div className={cl("sidebar")}>
-                    <div className={cl("brand")}>
-                        <div className={cl("brand-icon")}><svg viewBox="0 0 24 24" width={18} height={18} fill="currentColor"><path d="M20 4H4C2.9 4 2 4.9 2 6v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4-8 5-8-5V6l8 5 8-5v2z" /></svg></div>
-                        <div><div className={cl("brand-name")}>Temp Mail</div><div className={cl("brand-tag")}>5 providers • Testcord</div></div>
-                        <span className={cl("brand-pill")}>TC</span>
-                    </div>
-
                     {active && (
                         <div className={cl("active-card")}>
                             <div className={cl("active-head")}>
@@ -231,13 +277,13 @@ export function TempMailModal({ modalProps }: { modalProps: RenderModalProps; })
 
                     <nav className={cl("nav")}>
                         <button className={cl("nav-item", { active: view === "inbox" })} onClick={() => setView("inbox")}>
-                            <span className={cl("nav-ico")}>📥</span><span>Inbox</span>{unread > 0 && <span className={cl("pill", "unread")}>{unread}</span>}
+                            <span className={cl("nav-ico")}><InboxIcon size={16} /></span><span>Inbox</span>{unread > 0 && <span className={cl("pill", "unread")}>{unread}</span>}
                         </button>
                         <button className={cl("nav-item", { active: view === "accounts" })} onClick={() => setView("accounts")}>
-                            <span className={cl("nav-ico")}>👤</span><span>Accounts</span><span className={cl("pill", "dim")}>{accounts.length}</span>
+                            <span className={cl("nav-ico")}><UserIcon width={16} height={16} /></span><span>Accounts</span><span className={cl("pill", "dim")}>{accounts.length}</span>
                         </button>
                         <button className={cl("nav-item", { active: view === "new" })} onClick={() => setView("new")}>
-                            <span className={cl("nav-ico")}>✉️</span><span>New address</span>
+                            <span className={cl("nav-ico")}><MailIcon size={16} /></span><span>New address</span>
                         </button>
                     </nav>
 
@@ -247,7 +293,7 @@ export function TempMailModal({ modalProps }: { modalProps: RenderModalProps; })
                             {providers.map(p => (
                                 <Tooltip key={p.id} text={`${p.name}: ${p.description}`}>
                                     {(props: any) => (
-                                        <span {...props} className={cl("legend-chip", { active: selectedProvider === p.id })} style={{ borderColor: p.accent }} onClick={() => setSelectedProvider(p.id)}>
+                                        <span {...props} className={cl("legend-chip", { active: selectedProvider === p.id })} onClick={() => setSelectedProvider(p.id)}>
                                             <span className={cl("chip-dot")} style={{ background: p.accent }} />{p.name}
                                         </span>
                                     )}
@@ -258,11 +304,11 @@ export function TempMailModal({ modalProps }: { modalProps: RenderModalProps; })
 
                 </div>
 
-                {/* Content */}
                 <div className={cl("content")}>
                     {error && (
                         <div className={cl("error")}>
-                            <span>⚠ {error}</span><button className={cl("error-close")} onClick={() => setError("")}>✕</button>
+                            <span className={cl("error-text")}><WarningIcon size={14} /> {error}</span>
+                            <button className={cl("error-close")} onClick={() => setError("")}><CloseIcon size={12} /></button>
                         </div>
                     )}
 
@@ -271,27 +317,33 @@ export function TempMailModal({ modalProps }: { modalProps: RenderModalProps; })
                             <div className={cl("view-header")}>
                                 <div className={cl("view-header-top")}>
                                     <div>
-                                        <div className={cl("view-title")}>Inbox {activeProv && <span className={cl("view-provider")} style={{ background: activeProv.accent }}>{activeProv.name}</span>}</div>
+                                        <div className={cl("view-title")}>Inbox {activeProv && <span className={cl("view-provider")}>{activeProv.name}</span>}</div>
                                         {active && <div className={cl("view-sub")}>{active.address} • {filtered.length}/{messages.length} {search ? "filtered" : "messages"}</div>}
                                     </div>
                                     <Tooltip text="Refresh">
-                                        {(p: any) => <button {...p} className={cl("icon-btn")} onClick={() => active && fetchInbox(active)} disabled={loading || !active}>↻</button>}
+                                        {(p: any) => <button {...p} className={cl("icon-btn")} onClick={() => active && fetchInbox(active)} disabled={loading || !active}><RefreshIcon size={16} /></button>}
                                     </Tooltip>
                                 </div>
                                 <div className={cl("header-actions")}>
-                                    <TextInput value={search} onChange={setSearch} placeholder="Search inbox…" className={cl("search-input")} />
+                                    <input
+                                        type="text"
+                                        value={search}
+                                        onChange={e => setSearch(e.target.value)}
+                                        placeholder="Search inbox…"
+                                        className={cl("search-input")}
+                                    />
                                 </div>
                             </div>
 
                             {!active && (
                                 <div className={cl("empty")}>
-                                    <div className={cl("empty-icon")}>✉️</div>
+                                    <div className={cl("empty-icon")}><MailIcon size={36} /></div>
                                     <div className={cl("empty-title")}>No inbox yet</div>
                                     <div className={cl("empty-sub")}>Pick a provider and generate a temporary address to start receiving mail.</div>
                                     <Button variant="primary" onClick={() => setView("new")}>Create address</Button>
                                     <div className={cl("empty-providers")}>
                                         {providers.map(p => (
-                                            <span key={p.id} className={cl("empty-prov")} style={{ borderColor: p.accent }}>{p.name}</span>
+                                            <span key={p.id} className={cl("empty-prov")}>{p.name}</span>
                                         ))}
                                     </div>
                                 </div>
@@ -301,7 +353,7 @@ export function TempMailModal({ modalProps }: { modalProps: RenderModalProps; })
 
                             {active && !loading && filtered.length === 0 && messages.length === 0 && (
                                 <div className={cl("empty")}>
-                                    <div className={cl("empty-icon")}>📭</div>
+                                    <div className={cl("empty-icon")}><InboxIcon size={36} /></div>
                                     <div className={cl("empty-title")}>Inbox empty</div>
                                     <div className={cl("empty-sub")}>Waiting for mail{intervalMs ? ` • Auto-refresh every ${intervalMs / 1000}s` : " • Manual refresh only"}.</div>
                                     <Button variant="secondary" onClick={() => active && fetchInbox(active)}>Refresh now</Button>
@@ -325,9 +377,9 @@ export function TempMailModal({ modalProps }: { modalProps: RenderModalProps; })
                                                 <div className={cl("msg-time")}>{fmtDate(m.createdAt)}</div>
                                                 <div className={cl("row-actions")}>
                                                     <Tooltip text="Copy preview">
-                                                        {(pp: any) => <button {...pp} className={cl("mini-btn")} onClick={e => { e.stopPropagation(); copyToClipboard(m.intro); showToast("Copied preview", Toasts.Type.SUCCESS); }}>⎘</button>}
+                                                        {(pp: any) => <button {...pp} className={cl("mini-btn")} onClick={e => { e.stopPropagation(); copyToClipboard(m.intro); showToast("Copied preview", Toasts.Type.SUCCESS); }}><CopyIcon width={13} height={13} /></button>}
                                                     </Tooltip>
-                                                    <button className={cl("mini-btn", "danger")} title="Delete" onClick={e => { e.stopPropagation(); handleDeleteMessage(m.id); }}>🗑</button>
+                                                    <button className={cl("mini-btn", "danger")} title="Delete" onClick={e => { e.stopPropagation(); handleDeleteMessage(m.id); }}><TrashIcon width={13} height={13} /></button>
                                                 </div>
                                             </div>
                                             {!m.seen && <span className={cl("unread-bar")} style={{ background: providerColor(active.providerId) }} />}
@@ -341,7 +393,7 @@ export function TempMailModal({ modalProps }: { modalProps: RenderModalProps; })
                     {view === "message" && (
                         <div className={cl("view")}>
                             <div className={cl("view-header")}>
-                                <Button size="small" variant="secondary" onClick={() => setView("inbox")}>← Back</Button>
+                                <Button size="small" variant="secondary" onClick={() => setView("inbox")}>Back</Button>
                                 {openMsg && <div className={cl("header-actions")}>
                                     <label className={cl("toggle")}>
                                         <input type="checkbox" checked={htmlPreview} onChange={e => setHtmlPreview(e.target.checked)} /> HTML
@@ -357,7 +409,7 @@ export function TempMailModal({ modalProps }: { modalProps: RenderModalProps; })
                                     <div className={cl("msg-meta")}>
                                         <span>From <strong>{openMsg.from.name || openMsg.from.address}</strong> &lt;{openMsg.from.address}&gt;</span>
                                         <span>{new Date(openMsg.createdAt).toLocaleString()}</span>
-                                        {active && <span className={cl("view-provider")} style={{ background: providerColor(active.providerId) }}>{getProvider(active.providerId)?.name}</span>}
+                                        {active && <span className={cl("view-provider")}>{getProvider(active.providerId)?.name}</span>}
                                     </div>
                                     <div className={cl("msg-body")}>
                                         {htmlPreview && openMsg.html?.[0] ? (
@@ -389,7 +441,7 @@ export function TempMailModal({ modalProps }: { modalProps: RenderModalProps; })
                                 <Button size="small" variant="primary" onClick={() => setView("new")}>+ New</Button>
                             </div>
                             {accounts.length === 0 && (
-                                <div className={cl("empty")}><div className={cl("empty-icon")}>👤</div><div className={cl("empty-title")}>No saved accounts</div><div className={cl("empty-sub")}>Your generated inboxes will appear here.</div></div>
+                                <div className={cl("empty")}><div className={cl("empty-icon")}><UserIcon width={36} height={36} /></div><div className={cl("empty-title")}>No saved accounts</div><div className={cl("empty-sub")}>Your generated inboxes will appear here.</div></div>
                             )}
                             <ScrollerThin className={cl("acc-list")}>
                                 {accounts.map(acc => {
@@ -406,8 +458,8 @@ export function TempMailModal({ modalProps }: { modalProps: RenderModalProps; })
                                             </div>
                                             <div className={cl("acc-actions")}>
                                                 {active?.id !== acc.id && <Button size="small" variant="primary" onClick={() => switchTo(acc)}>Use</Button>}
-                                                <Tooltip text="Copy address">{(p: any) => <button {...p} className={cl("icon-btn")} onClick={() => { copyToClipboard(acc.address); showToast("Copied!", Toasts.Type.SUCCESS); }}>⎘</button>}</Tooltip>
-                                                <Tooltip text="Delete">{(p: any) => <span {...p}><Button size="small" variant="dangerPrimary" onClick={() => deleteAcc(acc)}>🗑</Button></span>}</Tooltip>
+                                                <Tooltip text="Copy address">{(p: any) => <button {...p} className={cl("icon-btn")} onClick={() => { copyToClipboard(acc.address); showToast("Copied!", Toasts.Type.SUCCESS); }}><CopyIcon width={14} height={14} /></button>}</Tooltip>
+                                                <Tooltip text="Delete">{(p: any) => <button {...p} className={cl("icon-btn", "danger")} onClick={() => deleteAcc(acc)}><TrashIcon width={14} height={14} /></button>}</Tooltip>
                                             </div>
                                         </div>
                                     );
@@ -425,11 +477,11 @@ export function TempMailModal({ modalProps }: { modalProps: RenderModalProps; })
 
                             <div className={cl("provider-grid")}>
                                 {providers.map(p => (
-                                    <button key={p.id} className={cl("provider-card", { selected: selectedProvider === p.id })} style={{ borderColor: selectedProvider === p.id ? p.accent : undefined }} onClick={() => setSelectedProvider(p.id)}>
+                                    <button key={p.id} className={cl("provider-card", { selected: selectedProvider === p.id })} onClick={() => setSelectedProvider(p.id)}>
                                         <span className={cl("prov-dot")} style={{ background: p.accent }} />
                                         <span className={cl("prov-name")}>{p.name}</span>
                                         <span className={cl("prov-desc")}>{p.description}</span>
-                                        {selectedProvider === p.id && <span className={cl("prov-check")} style={{ background: p.accent }}>✓</span>}
+                                        {selectedProvider === p.id && <span className={cl("prov-check")}><CheckmarkIcon size={10} /></span>}
                                     </button>
                                 ))}
                             </div>
@@ -437,7 +489,7 @@ export function TempMailModal({ modalProps }: { modalProps: RenderModalProps; })
                             <div className={cl("new-section")}>
                                 <div className={cl("section-label")}>Quick generate</div>
                                 <div className={cl("section-desc")}>Random username on {getProvider(selectedProvider)?.name} — instant inbox.</div>
-                                <Button variant="primary" disabled={loading} onClick={() => createAddress(true)}>{loading ? "Creating…" : "⚡ Generate random address"}</Button>
+                                <Button variant="primary" disabled={loading} onClick={() => createAddress(true)}>{loading ? "Creating…" : "Generate random address"}</Button>
                             </div>
 
                             <div className={cl("divider")}><span>or custom</span></div>
@@ -445,15 +497,36 @@ export function TempMailModal({ modalProps }: { modalProps: RenderModalProps; })
                             <div className={cl("new-section")}>
                                 <div className={cl("section-label")}>Custom username</div>
                                 <div className={cl("custom-row")}>
-                                    <TextInput placeholder="username" value={customUser} onChange={v => setCustomUser(v)} className={cl("custom-input")} />
+                                    <input
+                                        type="text"
+                                        placeholder="username"
+                                        value={customUser}
+                                        onChange={e => setCustomUser(e.target.value)}
+                                        className={cl("custom-input")}
+                                    />
                                     <span className={cl("at")}>@</span>
-                                    <select className={cl("domain-select")} value={selDomain} onChange={e => setSelDomain(e.currentTarget.value)}>
-                                        {domains.map(d => <option key={d} value={d}>{d}</option>)}
-                                        {domains.length === 0 && <option>loading…</option>}
-                                    </select>
+                                    {Select ? (
+                                        <div className={cl("domain-select-wrap")}>
+                                            <Select
+                                                options={domains.map(d => ({ label: d, value: d }))}
+                                                isSelected={v => v === (selDomain || domains[0])}
+                                                select={v => setSelDomain(v)}
+                                                serialize={v => String(v)}
+                                                placeholder={domains.length ? "Select domain" : "Loading domains…"}
+                                                closeOnSelect={true}
+                                                maxVisibleItems={6}
+                                                className={cl("domain-select")}
+                                            />
+                                        </div>
+                                    ) : (
+                                        <select className={cl("domain-select")} value={selDomain} onChange={e => setSelDomain(e.currentTarget.value)}>
+                                            {domains.map(d => <option key={d} value={d}>{d}</option>)}
+                                            {domains.length === 0 && <option>loading…</option>}
+                                        </select>
+                                    )}
                                 </div>
                                 <Button variant="primary" disabled={loading || !customUser.trim()} onClick={() => createAddress(false)}>{loading ? "Creating…" : "Create address"}</Button>
-                                <div className={cl("hint")}>Provider: <strong style={{ color: providerColor(selectedProvider) }}>{getProvider(selectedProvider)?.name}</strong> • {domains.length} domain{domains.length !== 1 ? "s" : ""} available</div>
+                                <div className={cl("hint")}>Provider: <strong>{getProvider(selectedProvider)?.name}</strong> • {domains.length} domain{domains.length !== 1 ? "s" : ""} available</div>
                             </div>
                         </ScrollerThin>
                     )}
