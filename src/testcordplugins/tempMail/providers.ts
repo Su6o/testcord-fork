@@ -85,7 +85,6 @@ async function doFetch(url: string, init?: RequestInit): Promise<Response> {
     return doFetch(url, init);
 }
 
-// ── mail.tm / mail.gw generic ───────────────────────────────────────────────
 const MAILTM_FALLBACK: Record<string, string[]> = {
     "mail.tm": ["fexbox.org", "fexpost.com", "fexbox.rs", "mail.tm"],
     "mail.gw": ["0box.eu", "mail.gw", "s0ny.flu.cc", "tmail.ws"],
@@ -106,7 +105,6 @@ function createMailTmProvider(base: string, id: string, name: string, accent: st
                 if (domains.length) return domains;
                 throw new Error("empty");
             } catch (e) {
-                // fallback so UI never bricks — user can still create address
                 return MAILTM_FALLBACK[id] ?? ["mail.tm"];
             }
         },
@@ -153,7 +151,6 @@ function createMailTmProvider(base: string, id: string, name: string, accent: st
                     headers: { Authorization: `Bearer ${account.token}`, Accept: "application/json" }
                 });
                 if (!r.ok) {
-                    // 401/403 means bad token — let UI show error, otherwise return empty to avoid spam
                     if (r.status === 401 || r.status === 403) throw new Error(`Auth failed ${r.status}`);
                     return [];
                 }
@@ -201,7 +198,6 @@ function createMailTmProvider(base: string, id: string, name: string, accent: st
     };
 }
 
-// ── 1secmail ────────────────────────────────────────────────────────────────
 const OneSecMailProvider: TempProvider = {
     id: "1secmail",
     name: "1SecMail",
@@ -275,11 +271,10 @@ const OneSecMailProvider: TempProvider = {
         };
     },
 
-    async deleteMessage() { /* 1secmail has no delete */ },
-    async deleteAccount() { /* no-op */ },
+    async deleteMessage() {},
+    async deleteAccount() {},
 };
 
-// ── Guerrilla Mail ──────────────────────────────────────────────────────────
 const GuerrillaProvider: TempProvider = {
     id: "guerrillamail",
     name: "Guerrilla Mail",
@@ -292,13 +287,11 @@ const GuerrillaProvider: TempProvider = {
 
     async createAccount(address: string) {
         const user = address.split("@")[0] || randomString(10);
-        // try set_email_user to claim custom
         const sidRes = await doFetch("https://api.guerrillamail.com/ajax.php?f=get_email_address&ip=127.0.0.1&agent=Mozilla_5.0&lang=en");
         const sidData: any = await sidRes.json().catch(() => ({}));
         const sidToken: string = sidData.sid_token ?? randomString(20);
         const fallbackEmail: string = sidData.email_addr ?? `${user}@guerrillamail.com`;
 
-        // Attempt to set custom username if provided
         if (user && user !== randomString(10)) {
             try {
                 const setRes = await doFetch(`https://api.guerrillamail.com/ajax.php?f=set_email_user&email_user=${encodeURIComponent(user)}&lang=en&sid_token=${encodeURIComponent(sidToken)}&site=guerrillamail.com`);
@@ -374,10 +367,9 @@ const GuerrillaProvider: TempProvider = {
         await doFetch(`https://api.guerrillamail.com/ajax.php?f=del_email&email_ids[]=${encodeURIComponent(mid)}&sid_token=${encodeURIComponent(account.sidToken)}&site=guerrillamail.com`).catch(() => {});
     },
 
-    async deleteAccount() { /* guerrilla session expires */ },
+    async deleteAccount() {},
 };
 
-// ── TempMail.lol ────────────────────────────────────────────────────────────
 const TempMailLolProvider: TempProvider = {
     id: "tempmail.lol",
     name: "TempMail.lol",
@@ -452,7 +444,6 @@ const TempMailLolProvider: TempProvider = {
     async deleteAccount() { },
 };
 
-// ── Maildrop ──────────────────────────────────────────────────────────────
 const MaildropProvider: TempProvider = {
     id: "maildrop",
     name: "Maildrop",
@@ -506,7 +497,6 @@ const MaildropProvider: TempProvider = {
     async deleteAccount() { },
 };
 
-// ── DropMail ──────────────────────────────────────────────────────────────
 const DropMailProvider: TempProvider = {
     id: "dropmail",
     name: "DropMail",
@@ -567,7 +557,6 @@ const DropMailProvider: TempProvider = {
     async deleteAccount() { },
 };
 
-// ── TMailor (backup) ──────────────────────────────────────────────────────
 const TMailorProvider: TempProvider = {
     id: "tmailor",
     name: "TMailor",
@@ -619,7 +608,6 @@ const TMailorProvider: TempProvider = {
     async deleteAccount() { },
 };
 
-// ── Registry ────────────────────────────────────────────────────────────────
 export const providers: TempProvider[] = [
     createMailTmProvider("https://api.mail.tm", "mail.tm", "Mail.tm", "#5865f2"),
     createMailTmProvider("https://api.mail.gw", "mail.gw", "Mail.gw", "#3b82f6"),
