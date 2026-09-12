@@ -61,7 +61,7 @@ function OpenLogsButton() {
     const { showLogsButton } = settings.use(HEADER_SETTINGS);
     if (!showLogsButton) return null;
 
-    return <HeaderBarButton tooltip="Open MessageLoggerTestcord" icon={LogsIcon} onClick={() => openLogs()} />;
+    return <HeaderBarButton tooltip="Open Logs" icon={LogsIcon} onClick={() => openLogs()} />;
 }
 
 async function processMessageFetch(response: FetchMessagesResponse) {
