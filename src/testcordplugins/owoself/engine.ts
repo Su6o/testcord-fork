@@ -337,12 +337,13 @@ export async function removeGrindChannel(id: string): Promise<void> {
 }
 
 function fixCommand(command: string): string {
-    let prefix = settings.store.prefix || "owo ";
-    if (!prefix.endsWith(" ")) prefix += " ";
+    const rawPrefix = (settings.store.prefix || "owo ").trim() || "owo";
+    const custom = rawPrefix.toLowerCase() !== "owo";
+    const prefix = custom ? rawPrefix : "owo ";
     let cmd = command.trim();
     // Internal strings are written with the default prefix. Strip it first so a
     // custom prefix never stacks into "wowo daily".
-    if (prefix.toLowerCase() !== "owo " && /^owo\s+/i.test(cmd)) {
+    if (custom && /^owo\s+/i.test(cmd)) {
         cmd = cmd.replace(/^owo\s+/i, "");
     }
     if (cmd.toLowerCase() === "owo") return "owo";
@@ -359,10 +360,17 @@ function fixCommand(command: string): string {
             cmd = parts.join(" ");
         }
     }
-    const first = cmd.split(/\s+/)[0]?.toLowerCase() ?? "";
     const known = ["hunt", "battle", "curse", "pray", "daily", "cookie", "quest", "checklist",
         "cf", "slots", "bj", "autohunt", "upgrade", "sacrifice", "sc", "zoo", "use", "inv",
-        "sell", "crate", "lootbox", "run", "pup", "piku", "h", "b", "s", "lb", "wc", "hb", "huntbot", "owo"];
+        "sell", "crate", "lootbox", "run", "pup", "piku", "h", "b", "s", "lb", "wc", "hb", "huntbot", "owo", "cash", "ab"];
+    // OwO reads the prefix as a raw string prefix, so custom prefixes join with
+    // no space ("wcash", not "w cash"). Collapse a spaced custom prefix too.
+    if (custom && cmd.toLowerCase().startsWith(`${prefix.toLowerCase()} `)) {
+        const rest = cmd.slice(prefix.length + 1);
+        const restFirst = rest.split(/\s+/)[0]?.toLowerCase() ?? "";
+        if (known.includes(restFirst)) cmd = `${prefix}${rest}`;
+    }
+    const first = cmd.split(/\s+/)[0]?.toLowerCase() ?? "";
     if (known.includes(first) && !cmd.toLowerCase().startsWith(prefix.toLowerCase())) {
         return `${prefix}${cmd}`;
     }

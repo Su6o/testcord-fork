@@ -20,7 +20,7 @@ export const settings = definePluginSettings({
     },
     prefix: {
         type: OptionType.STRING,
-        description: "Command prefix sent before every OwO command.",
+        description: "Command prefix for OwO. Default owo sends spaced commands like owo hunt. A custom prefix joins directly, so w sends whunt and wcash.",
         default: "owo "
     },
     fallbackChannels: {

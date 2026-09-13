@@ -11,7 +11,7 @@ import definePlugin from "@utils/types";
 import { Forms, React, useEffect, useState } from "@webpack/common";
 
 import { openDashboard } from "./dashboard";
-import { handleMessage, log, logger, type OwoEmbed, type OwoMessage,refreshScheduler, setDashboardOpener, snapshot, startEngine, stopEngine } from "./engine";
+import { handleMessage, log, logger, type OwoEmbed, type OwoMessage, refreshScheduler, setDashboardOpener, snapshot, startEngine, stopEngine } from "./engine";
 import { settings } from "./settings";
 
 function OwoIcon(props: React.SVGProps<SVGSVGElement>) {
@@ -125,7 +125,7 @@ function OwoAbout() {
 
 export default definePlugin({
     name: "OwoSelf",
-    description: "OwO grinder ported from NeuraSelf. Hunt, battle, quests, gems, gambling and captcha watch with an in client dashboard and multi account profiles.",
+    description: "owo selfbot inspired by neuraself, due to limitations on the dc client its better to use NeuraSelf but this one is just as good if u only needa auto hunt and battle while doing sum other shi",
     authors: [TestcordDevs.x2b],
     dependencies: ["HeaderBarAPI"],
 
