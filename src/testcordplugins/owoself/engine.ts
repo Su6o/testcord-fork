@@ -10,7 +10,7 @@ import { getCurrentChannel, sendMessage } from "@utils/discord";
 import { Logger } from "@utils/Logger";
 import { sleep } from "@utils/misc";
 import { findByPropsLazy } from "@webpack";
-import { ChannelStore, GuildStore, showToast, Toasts, UserStore } from "@webpack/common";
+import { ChannelStore, Constants, GuildStore, RestAPI, showToast, Toasts, UserStore } from "@webpack/common";
 
 import { getProfiles, type OwoProfile,pickActiveProfile, resolveChannels, upsertProfile } from "./accounts";
 import { settings } from "./settings";
@@ -105,6 +105,7 @@ interface PersistedStats {
     nextQuestTimer: string | null;
     gambling: GamblingStats;
     lastDailyRun: number;
+    lastCookieRun: number;
 }
 
 const emptyGambling = (): GamblingStats => ({
@@ -145,11 +146,19 @@ export const runtime = {
     huntbotDelay: 900,
     lastDailyRun: 0,
     lastDailySent: 0,
+    lastCookieRun: 0,
     lastCookieSent: 0,
     lastSellSent: 0,
     lastSacSent: 0,
-    lastCrateOpened: 0,
-    lastLootboxOpened: 0,
+    crateCooldownUntil: 0,
+    lootboxCooldownUntil: 0,
+    shopCashPendingAt: 0,
+    zooPending: false,
+    altWarned: false,
+    lastQuestSolverRun: 0,
+    lastQueuedQuest: {} as Record<string, number>,
+    lastSuccessAt: {} as Record<string, number>,
+    playedBlackjack: [] as string[],
     cmdStates: new Map<string, CmdState>(),
     queue: [] as QueueItem[]
 };
@@ -360,10 +369,17 @@ function fixCommand(command: string): string {
     return cmd;
 }
 
-function pickTargets(raw: string): string {
-    const ids = raw.split(/[\s,]+/).map(s => s.trim()).filter(s => /^\d{10,25}$/.test(s));
-    if (ids.length === 0) return "";
-    return `<@${ids[Math.floor(Math.random() * ids.length)]}>`;
+function cursePrayCommand(choice: string, raw: string, ping: boolean): string {
+    const ids = raw.split(/[\s,]+/).map(t => t.trim()).filter(t => /^\d{10,25}$/.test(t));
+    if (ids.length === 0) return choice;
+    const target = ids[Math.floor(Math.random() * ids.length)] ?? "";
+    return ping ? `${choice} <@${target}>` : `${choice} ${target}`;
+}
+
+export function questEmoteTarget(): string {
+    const ids = settings.store.prayTargets.split(/[\s,]+/).map(t => t.trim()).filter(t => /^\d{10,25}$/.test(t));
+    if (ids.length > 0) return ids[Math.floor(Math.random() * ids.length)] ?? settings.store.owoBotId;
+    return settings.store.owoBotId;
 }
 
 async function persist(): Promise<void> {
@@ -371,7 +387,7 @@ async function persist(): Promise<void> {
         hunt: runtime.hunt, battle: runtime.battle, owo: runtime.owo, other: runtime.other,
         gemsUsed: runtime.gemsUsed, captchas: runtime.captchas, bans: runtime.bans,
         warnings: runtime.warnings, cash: runtime.cash, questData: runtime.questData,
-        nextQuestTimer: runtime.nextQuestTimer, gambling: runtime.gambling, lastDailyRun: runtime.lastDailyRun
+        nextQuestTimer: runtime.nextQuestTimer, gambling: runtime.gambling, lastDailyRun: runtime.lastDailyRun, lastCookieRun: runtime.lastCookieRun
     };
     try {
         await DataStore.set(STATS_KEY, data);
@@ -398,6 +414,7 @@ async function restore(): Promise<void> {
             runtime.nextQuestTimer = data.nextQuestTimer ?? null;
             if (data.gambling) runtime.gambling = { ...emptyGambling(), ...data.gambling };
             runtime.lastDailyRun = data.lastDailyRun ?? 0;
+            runtime.lastCookieRun = data.lastCookieRun ?? 0;
         }
         const daily = await DataStore.get<{ lastRun: number; }>(DAILY_KEY);
         if (daily && typeof daily.lastRun === "number") runtime.lastDailyRun = daily.lastRun;
@@ -422,6 +439,219 @@ function unregister(cmdId: string): void {
     runtime.cmdStates.delete(cmdId);
 }
 
+function shopBuyContent(): string | null {
+    const s = settings.store;
+    const tier = Math.min(7, Math.max(1, Math.floor(s.shopItems)));
+    const price = SHOP_PRICES[tier] ?? 0;
+    if (runtime.cash <= 0) {
+        if (Date.now() - runtime.shopCashPendingAt > 60000) {
+            runtime.shopCashPendingAt = Date.now();
+            log("SYS", "Shop: balance unknown, syncing via cash check.");
+            enqueue("owo cash", 3, null);
+        }
+        return null;
+    }
+    if (runtime.cash >= price) {
+        log("SYS", `Shop: buying tier ${tier} for ${price.toLocaleString()} (balance ${runtime.cash.toLocaleString()}).`);
+        return `buy ${tier}`;
+    }
+    log("SYS", `Shop: cannot afford tier ${tier} (need ${price.toLocaleString()}, have ${runtime.cash.toLocaleString()}).`);
+    return null;
+}
+
+function allocateHuntbotUpgrades(essence: number, levels: Record<string, number>, invested: Record<string, number>, enabled: string[]): Record<string, number> {
+    const s = settings.store;
+    const prios: Record<string, number> = {
+        efficiency: s.huntbotPrioEfficiency, duration: s.huntbotPrioDuration, cost: s.huntbotPrioCost,
+        gain: s.huntbotPrioGain, exp: s.huntbotPrioExp, radar: s.huntbotPrioRadar
+    };
+    const dyn = (t: string, lvls: Record<string, number>): number => {
+        if (t === "efficiency" || t === "gain") {
+            const o = t === "efficiency" ? "gain" : "efficiency";
+            if ((lvls[t] ?? 0) < (lvls[o] ?? 0)) return (prios[t] ?? 0) + 2;
+        }
+        if (t === "duration" && (lvls[t] ?? 0) < 125) return (prios[t] ?? 0) + 3;
+        if (t === "exp" && (lvls.efficiency ?? 0) >= 215 && (lvls.gain ?? 0) >= 200) return 10;
+        return prios[t] ?? 0;
+    };
+    const allocation: Record<string, number> = {};
+    for (const t of enabled) allocation[t] = 0;
+    let remaining = essence;
+    const currLvls = { ...levels };
+    const currInv = { ...invested };
+    let guard = 0;
+    while (remaining > 0 && guard++ < 10000) {
+        let best: string | null = null;
+        let bestRatio = -1;
+        let bestCost = 0;
+        for (const t of enabled) {
+            const spec = HUNTBOT_SPECS[t];
+            if (!spec) continue;
+            const lvl = currLvls[t] ?? 0;
+            if (lvl >= spec.max) continue;
+            const cost = Math.floor(spec.inc * Math.pow(lvl + 1, spec.power));
+            const required = Math.max(0, cost - (currInv[t] ?? 0));
+            if (required <= 0) {
+                currLvls[t] = lvl + 1;
+                currInv[t] = 0;
+                continue;
+            }
+            const ratio = dyn(t, currLvls) / required;
+            if (required <= remaining && ratio > bestRatio) {
+                bestRatio = ratio;
+                best = t;
+                bestCost = required;
+            }
+        }
+        if (best) {
+            allocation[best] = (allocation[best] ?? 0) + bestCost;
+            remaining -= bestCost;
+            currLvls[best] = (currLvls[best] ?? 0) + 1;
+            currInv[best] = 0;
+        } else {
+            let target = "";
+            let targetScore = -1;
+            for (const t of enabled) {
+                const spec = HUNTBOT_SPECS[t];
+                if (!spec) continue;
+                const cost = Math.max(1, Math.floor(spec.inc * Math.pow((currLvls[t] ?? 0) + 1, spec.power)) - (currInv[t] ?? 0));
+                const score = dyn(t, currLvls) / cost;
+                if (score > targetScore) {
+                    targetScore = score;
+                    target = t;
+                }
+            }
+            if (target === "") break;
+            allocation[target] = (allocation[target] ?? 0) + remaining;
+            break;
+        }
+    }
+    const out: Record<string, number> = {};
+    for (const [t, amt] of Object.entries(allocation)) {
+        if (amt > 0) out[t] = amt;
+    }
+    return out;
+}
+
+let lastUpgradeEssence = 0;
+let lastUpgradeTime = 0;
+
+export function trackQuestProgress(descContains: string, count = 1, exclude?: string): void {
+    let updated = false;
+    for (const q of runtime.questData) {
+        if (q.completed) continue;
+        const d = q.description.toLowerCase();
+        if (!d.includes(descContains.toLowerCase())) continue;
+        if (exclude && d.includes(exclude.toLowerCase())) continue;
+        q.current = Math.min(q.total, q.current + count);
+        if (q.current >= q.total) {
+            q.completed = true;
+            log("SUCCESS", `Quest completed: ${q.description}`);
+        }
+        updated = true;
+    }
+    if (updated) {
+        void persist();
+        notify();
+    }
+}
+
+function isAltQuest(desc: string): boolean {
+    return [
+        "have a friend use an action command on you",
+        "have a friend use an emote command on you",
+        "have a friend pray to you",
+        "have a friend curse you",
+        "receive a cookie from",
+        "battle with a friend"
+    ].some(t => desc.includes(t));
+}
+
+function queueQuestCommand(cmd: string, cooldown: number): void {
+    const now = Date.now() / 1000;
+    if (now - (runtime.lastQueuedQuest[cmd] ?? 0) < cooldown) return;
+    runtime.lastQueuedQuest[cmd] = now;
+    log("SYS", `Quest engine: queueing ${cmd}.`);
+    enqueue(cmd, 5, null);
+}
+
+function questSolverTick(): void {
+    if (!settings.store.questEnabled || !settings.store.questAutoSolve) return;
+    const now = Date.now() / 1000;
+    if (now - runtime.lastQuestSolverRun < 20) return;
+    runtime.lastQuestSolverRun = now;
+    const quests = runtime.questData;
+    if (!quests.some(q => !q.completed && q.description.toLowerCase().includes("hunt 3 animals that are")) && runtime.forceLuckyGems) {
+        runtime.forceLuckyGems = false;
+        log("SYS", "Quest engine: rarity quest done, lucky gem force off.");
+    }
+    for (const q of quests) {
+        if (q.completed) continue;
+        const desc = q.description.toLowerCase();
+        const remaining = q.total - q.current;
+        if (isAltQuest(desc)) {
+            if (now - (runtime.lastQueuedQuest[desc] ?? 0) < 60) break;
+            runtime.lastQueuedQuest[desc] = now;
+            if (!runtime.altWarned) {
+                runtime.altWarned = true;
+                log("WARN", `Quest engine: social quest needs a friend: '${q.description}'. Do it by hand, progress is tracked.`);
+            }
+            break;
+        }
+        if (desc.includes("gamble")) {
+            queueQuestCommand("owo cf 1", 12);
+            break;
+        }
+        if (desc.includes("use an action command on someone") || desc.includes("use an emote command on someone")) {
+            const emote = EMOTE_COMMANDS[Math.floor(Math.random() * EMOTE_COMMANDS.length)] ?? "hug";
+            queueQuestCommand(`owo ${emote} <@${questEmoteTarget()}>`, 8);
+            break;
+        }
+        if (desc.includes("hunt 3 animals that are") && !runtime.forceLuckyGems) {
+            runtime.forceLuckyGems = true;
+            log("SYS", "Quest engine: rarity quest, forcing lucky gems.");
+        }
+        if ((desc.includes("say 'owo'") || desc.includes('say "owo"')) && remaining > 5) {
+            queueQuestCommand("owo", 6);
+            break;
+        }
+    }
+}
+
+export function solveQuest(index: number): void {
+    const q = runtime.questData[index];
+    if (!q || q.completed) return;
+    const desc = q.description.toLowerCase();
+    if (desc.includes("gamble")) {
+        void sendManual("owo cf 1");
+        return;
+    }
+    if (desc.includes("say 'owo'") || desc.includes('say "owo"')) {
+        void sendManual("owo");
+        return;
+    }
+    if (desc.includes("use an action command on someone") || desc.includes("use an emote command on someone")) {
+        const emote = EMOTE_COMMANDS[Math.floor(Math.random() * EMOTE_COMMANDS.length)] ?? "hug";
+        void sendManual(`owo ${emote} <@${questEmoteTarget()}>`);
+        return;
+    }
+    if (desc.includes("hunt 3 animals that are")) {
+        runtime.forceLuckyGems = true;
+        log("SYS", "Quest engine: rarity quest, forcing lucky gems.");
+        notify();
+        return;
+    }
+    showToast("Solve this quest by hand, the engine tracks the progress.", Toasts.Type.MESSAGE);
+}
+
+export function fireNow(cmdId: string): void {
+    const st = runtime.cmdStates.get(cmdId);
+    if (!st) return;
+    st.lastRan = 0;
+    log("SYS", `Firing ${cmdId} now.`);
+    notify();
+}
+
 export function refreshScheduler(): void {
     const s = settings.store;
     if (s.huntEnabled) register("hunt", "hunt", 3, rand(s.huntCooldownMin, s.huntCooldownMax), 5);
@@ -432,17 +662,20 @@ export function refreshScheduler(): void {
     else unregister("owo");
     if (s.prayEnabled || s.curseEnabled) {
         register("cursepray", () => {
-            const pool: string[] = [];
+            const pool: { cmd: string; min: number; max: number; }[] = [];
             if (s.prayEnabled) {
-                const t = pickTargets(s.prayTargets);
-                pool.push(t ? `pray ${t}` : "pray");
+                pool.push({ cmd: cursePrayCommand("pray", s.prayTargets, s.prayPing), min: s.cursePrayCooldownMin, max: s.cursePrayCooldownMax });
             }
             if (s.curseEnabled) {
-                const t = pickTargets(s.curseTargets);
-                if (t) pool.push(`curse ${t}`);
+                const cmd = cursePrayCommand("curse", s.curseTargets, s.cursePing);
+                if (cmd !== "curse") pool.push({ cmd, min: s.cursePrayCooldownMin, max: s.cursePrayCooldownMax });
             }
             if (pool.length === 0) return null;
-            return pool[Math.floor(Math.random() * pool.length)] ?? null;
+            const pick = pool[Math.floor(Math.random() * pool.length)];
+            if (!pick) return null;
+            const st = runtime.cmdStates.get("cursepray");
+            if (st) st.delay = rand(pick.min, pick.max);
+            return pick.cmd;
         }, 3, rand(s.cursePrayCooldownMin, s.cursePrayCooldownMax), 30);
     } else unregister("cursepray");
     if (s.dailyEnabled) {
@@ -451,8 +684,12 @@ export function refreshScheduler(): void {
         const st = runtime.cmdStates.get("daily");
         if (st) st.lastRan = remaining > 0 ? Date.now() / 1000 - 86400 + remaining : Date.now() / 1000 - 86400;
     } else unregister("daily");
-    if (s.cookieEnabled && s.cookieTarget.trim() !== "") register("cookie", `cookie <@${s.cookieTarget.trim()}>`, 4, 86400, 60);
-    else unregister("cookie");
+    if (s.cookieEnabled && s.cookieTarget.trim() !== "") {
+        const remaining = runtime.lastCookieRun + 86400 - Date.now() / 1000;
+        register("cookie", `cookie ${s.cookieTarget.trim()}`, 4, 86400, 60);
+        const st = runtime.cmdStates.get("cookie");
+        if (st && remaining > 0) st.lastRan = Date.now() / 1000 - 86400 + remaining;
+    } else unregister("cookie");
     if (s.rppEnabled) {
         register("rpp", () => {
             const now = Date.now() / 1000;
@@ -471,12 +708,19 @@ export function refreshScheduler(): void {
     else unregister("slots");
     if (s.blackjackEnabled) register("blackjack", () => `bj ${currentBet("blackjack", s.blackjackAmount)}`, 3, rand(40, 70), 25);
     else unregister("blackjack");
-    if (s.sellEnabled) register("sell", "sell all", 4, Math.max(1, s.sellIntervalMin) * 60, 60);
+    const sellType = (s.sellType || "all").trim() || "all";
+    if (s.sellEnabled) register("sell", `sell ${sellType}`, 4, Math.max(1, s.sellIntervalMin) * 60, 60);
     else unregister("sell");
-    if (s.sacrificeEnabled) register("sacrifice", "sacrifice all", 4, Math.max(1, s.sacrificeIntervalMin) * 60, 120);
+    const sacType = (s.sacrificeType || "all").trim() || "all";
+    if (s.sacrificeEnabled) register("sacrifice", `sacrifice ${sacType}`, 4, Math.max(1, s.sacrificeIntervalMin) * 60, 120);
     else unregister("sacrifice");
-    if (s.shopEnabled) register("shop_buy", `buy ${Math.min(7, Math.max(1, s.shopItems))}`, 3, Math.max(60, s.shopCooldown), 120);
-    else unregister("shop_buy");
+    if (s.shopEnabled) {
+        register("shop_buy", () => shopBuyContent(), 3, Math.max(60, s.shopCooldown), 90);
+        register("shop_cash_sync", () => "owo cash", 3, 7200, 30);
+    } else {
+        unregister("shop_buy");
+        unregister("shop_cash_sync");
+    }
     if (s.levelGrindEnabled) {
         register("level_quotes", () => QUOTES[Math.floor(Math.random() * QUOTES.length)] ?? null, 4,
             rand(s.levelGrindMin, s.levelGrindMax), 45);
@@ -486,17 +730,73 @@ export function refreshScheduler(): void {
 }
 
 const QUOTES = [
-    "the grind never stops, one more hunt",
-    "owo economy goes brrr",
-    "just a traveler passing through with cowoncy dreams",
-    "hunting season is open all year here",
-    "small steps every day add up",
-    "coffee first, then the hunt",
-    "rng please be kind today",
-    "another day another cowoncy",
-    "patience is the real grindset",
-    "collecting animals like trading cards"
+    "Your heart is the size of an ocean. Go find yourself in its hidden depths.",
+    "The Bay of Bengal is hit frequently by cyclones. The months of November and May, in particular, are dangerous in this regard.",
+    "Thinking is the capital, Enterprise is the way, Hard Work is the solution.",
+    "If You Can'T Make It Good, At Least Make It Look Good.",
+    "Heart be brave. If you cannot be brave, just go. Love's glory is not a small thing.",
+    "It is bad for a young man to sin; but it is worse for an old man to sin.",
+    "If You Are Out To Describe The Truth, Leave Elegance To The Tailor.",
+    "O man you are busy working for the world, and the world is busy trying to turn you out.",
+    "While children are struggling to be unique, the world around them is trying all means to make them look like everybody else.",
+    "These Capitalists Generally Act Harmoniously And In Concert, To Fleece The People.",
+    "I Don'T Believe In Failure. It Is Not Failure If You Enjoyed The Process.",
+    "Do not get elated at any victory, for all such victory is subject to the will of God.",
+    "Wear gratitude like a cloak and it will feed every corner of your life.",
+    "If you even dream of beating me you'd better wake up and apologize.",
+    "I Will Praise Any Man That Will Praise Me.",
+    "One Of The Greatest Diseases Is To Be Nobody To Anybody.",
+    "I'm so fast that last night I turned off the light switch in my hotel room and was in bed before the room was dark.",
+    "People Must Learn To Hate And If They Can Learn To Hate, They Can Be Taught To Love.",
+    "Everyone has been made for some particular work, and the desire for that work has been put in every heart.",
+    "The less of the World, the freer you live.",
+    "Respond to every call that excites your spirit.",
+    "The Way To Get Started Is To Quit Talking And Begin Doing.",
+    "God Doesn'T Require Us To Succeed, He Only Requires That You Try.",
+    "Speak any language, Turkish, Greek, Persian, Arabic, but always speak with love.",
+    "Happiness comes towards those which believe in him.",
+    "Knowledge is of two kinds: that which is absorbed and that which is heard. And that which is heard does not profit if it is not absorbed.",
+    "When I am silent, I have thunder hidden inside.",
+    "Technological Progress Is Like An Axe In The Hands Of A Pathological Criminal.",
+    "No One Would Choose A Friendless Existence On Condition Of Having All The Other Things In The World.",
+    "Life is a gamble. You can get hurt, but people die in plane crashes, lose their arms and legs in car accidents; people die every day. Same with fighters: some die, some get hurt, some go on. You just don't let yourself believe it will happen to you."
 ];
+
+const EMOTE_TRIGGERS = [" hugs ", " kisses ", " slaps ", " punches ", " cuddles ", " pats ", " pokes ", " bites ", " blushes at ", " stares at ", " cries to ", " pouts at "];
+const EMOTE_COMMANDS = ["hug", "poke", "pat", "cuddle", "kiss"];
+
+const EMOJI_NAMES: Record<string, string> = {
+    "<a:hlizard:459203643732918283>": "hlizard", "<a:hsnake:459203694878130177>": "hsnake",
+    "<a:hsquid:459204137264087061>": "hsquid", "<a:hmonkey:459203661407453184>": "hmonkey",
+    "<a:hkoala:459203626766958612>": "hkoala", "<a:dwolf:435592220758769684>": "dwolf",
+    "<a:dgorilla:438842240865927180>": "dgorilla", "<a:dfrog:435592209883070474>": "dfrog",
+    "<a:deagle:438844624887480320>": "deagle", "<a:dboar:438847718459179018>": "dboar",
+    "<a:gsquid:417968419984375808>": "gsquid", "<a:gowl:418284974593277954>": "gowl",
+    "<a:gfox:418291892376305664>": "gfox", "<a:glion:418289164736528404>": "glion",
+    "<a:gdeer:418290217989046274>": "gdeer", "<a:gspider:510023576775032844>": "gspider",
+    "<a:gshrimp:510023577295388672>": "gshrimp", "<a:gpanda:510023577320292353>": "gpanda",
+    "<a:gfish:510023576892473364>": "gfish",
+    "<a:gcamel:510023576573837322>": "gcamel",
+    ":dove:": "dove", ":ghost:": "ghost", ":snowman2:": "snowman", ":unicorn:": "unicorn",
+    ":dragon:": "dragon", ":whale:": "whale", ":elephant:": "elephant", ":penguin:": "penguin",
+    ":tiger2:": "tiger", ":crocodile:": "crocodile", ":cat2:": "cat", ":dog2:": "dog",
+    ":cow2:": "cow", ":pig2:": "pig", ":sheep:": "sheep", ":chipmunk:": "chipmunk",
+    ":rabbit2:": "rabbit", ":rooster:": "rooster", ":mouse:": "mouse", ":baby_chick:": "baby_chick",
+    ":butterfly:": "butterfly", ":lady_beetle:": "lady_beetle", ":bug:": "bug", ":bee:": "bee",
+    ":snail:": "snail"
+};
+
+const SHOP_PRICES: Record<number, number> = { 1: 10, 2: 100, 3: 1000, 4: 10000, 5: 100000, 6: 1000000, 7: 10000000 };
+
+interface HuntbotSpec { inc: number; power: number; max: number; }
+const HUNTBOT_SPECS: Record<string, HuntbotSpec> = {
+    efficiency: { inc: 10, power: 1.748, max: 215 },
+    duration: { inc: 10, power: 1.7, max: 235 },
+    cost: { inc: 1000, power: 3.4, max: 5 },
+    gain: { inc: 10, power: 1.8, max: 200 },
+    exp: { inc: 10, power: 1.8, max: 200 },
+    radar: { inc: 50, power: 2.5, max: 999 }
+};
 
 function currentBet(game: string, base: number): number {
     const max = Math.max(1, settings.store.gambleMaxBet);
@@ -636,6 +936,8 @@ async function tick(): Promise<void> {
         content = fixCommand(content);
         enqueue(content, st.priority, cmdId);
     }
+
+    questSolverTick();
 
     if (runtime.queue.length === 0) return;
     if (Date.now() - runtime.lastSentAt < MIN_SEND_INTERVAL * 1000) return;
@@ -979,6 +1281,7 @@ function handleGambling(text: string): void {
         }
         const won = /you won/i.test(text);
         settleBet("blackjack", won, currentBet("blackjack", settings.store.blackjackAmount));
+        trackQuestProgress("Gamble");
         const st = runtime.cmdStates.get("blackjack");
         if (st) st.delay = rand(40, 70);
         syncCash(text);
@@ -988,6 +1291,7 @@ function handleGambling(text: string): void {
     const game = cf ? "coinflip" : "slots";
     const base = game === "coinflip" ? settings.store.coinflipAmount : settings.store.slotsAmount;
     settleBet(game, won, currentBet(game, base));
+    trackQuestProgress("Gamble");
     if (game === "coinflip") {
         const st = runtime.cmdStates.get("coinflip");
         if (st) st.delay = rand(30, 60);
@@ -998,9 +1302,65 @@ function handleGambling(text: string): void {
     syncCash(text);
 }
 
-function handleHuntbot(text: string): void {
+function handleHuntbot(message: OwoMessage, text: string): void {
     if (!settings.store.huntbotEnabled) return;
     const st = runtime.cmdStates.get("huntbot");
+    if (settings.store.huntbotUpgradeEnabled && message.embeds) {
+        for (const embed of message.embeds) {
+            if (!embed.fields || embed.fields.length === 0) continue;
+            if (!headerMentionsMe(message)) continue;
+            const keywords: Record<string, string> = {
+                efficiency: "efficiency", duration: "duration", cost: "cost",
+                gain: "gain", exp: "experience", radar: "radar"
+            };
+            let essence = 0;
+            const levels: Record<string, number> = {};
+            const invested: Record<string, number> = {};
+            const enabled: string[] = [];
+            for (const field of embed.fields) {
+                const fname = (field.name ?? "").toLowerCase();
+                const fval = field.value ?? "";
+                if (fname.includes("animal essence")) {
+                    const backticked = /`([\d,]+)`/.exec(field.name ?? "")?.[1];
+                    const plain = /[\d,]+/.exec(field.name ?? "")?.[0];
+                    essence = Number((backticked ?? plain ?? "0").replace(/,/g, ""));
+                    continue;
+                }
+                for (const [trait, keyword] of Object.entries(keywords)) {
+                    if (!fname.includes(keyword)) continue;
+                    if (fval.includes("[MAX]")) {
+                        levels[trait] = 1000;
+                        invested[trait] = 0;
+                        enabled.push(trait);
+                    } else {
+                        const lvl = /Lvl (\d+) \[(\d+)\/\d+\]/.exec(fval);
+                        if (lvl?.[1] && lvl[2]) {
+                            levels[trait] = Number(lvl[1]);
+                            invested[trait] = Number(lvl[2]);
+                            enabled.push(trait);
+                        }
+                    }
+                    break;
+                }
+            }
+            if (enabled.length > 0 && essence > 0) {
+                if (essence !== lastUpgradeEssence || Date.now() - lastUpgradeTime >= 30000) {
+                    const allocations = allocateHuntbotUpgrades(essence, levels, invested, enabled);
+                    if (Object.keys(allocations).length > 0) {
+                        lastUpgradeEssence = essence;
+                        lastUpgradeTime = Date.now();
+                        for (const [trait, amount] of Object.entries(allocations)) {
+                            enqueue(`upgrade ${trait} ${amount}`, 2, null);
+                            log("SUCCESS", `Huntbot: upgrading ${trait} with ${amount.toLocaleString()} essence.`);
+                        }
+                    }
+                }
+            } else if (enabled.length > 0) {
+                log("SYS", "Huntbot: no essence to spend, skipping upgrade.");
+            }
+            break;
+        }
+    }
     if (/i will be back in/i.test(text)) {
         let total = 0;
         let found = false;
@@ -1031,6 +1391,13 @@ function handleHuntbot(text: string): void {
         if (st) { st.delay = runtime.huntbotDelay; st.lastRan = Date.now() / 1000; }
         log("WARN", "Huntbot asks for a password image. Open the channel and solve it, automation waits.");
         showToast("OwoSelf: huntbot password required, check the channel.", Toasts.Type.MESSAGE);
+        notify();
+        return;
+    }
+    if (/wrong password|incorrect password/i.test(text)) {
+        runtime.huntbotDelay = 630;
+        if (st) { st.delay = runtime.huntbotDelay; st.lastRan = Date.now() / 1000; }
+        log("WARN", "Huntbot: wrong password, waiting for reset.");
         notify();
     }
 }
@@ -1171,6 +1538,10 @@ function handleSelfCommand(message: OwoMessage): boolean {
     if (!me || message.author.id !== me.id) return false;
     const content = (message.content ?? "").trim();
     const lower = content.toLowerCase();
+    const prefix = (settings.store.prefix || "owo ").trim().toLowerCase();
+    if (lower === "owo" || lower === "uwu" || lower === `${prefix}owo` || lower === `${prefix}uwu`) {
+        trackQuestProgress("Say 'owo'");
+    }
     let arg: string | null = null;
     if (lower === ".owoself" || lower === "owoself") arg = "";
     else if (lower.startsWith(".owoself ")) arg = content.slice(9).trim().toLowerCase();
@@ -1198,6 +1569,103 @@ function handleSelfCommand(message: OwoMessage): boolean {
     return true;
 }
 
+function headerMentionsMe(message: OwoMessage): boolean {
+    const me = currentUser();
+    const name = me?.username.toLowerCase() ?? "";
+    if (name === "") return false;
+    for (const e of message.embeds ?? []) {
+        if ((e.author?.name?.toLowerCase() ?? "").includes(name)) return true;
+        if ((e.title?.toLowerCase() ?? "").includes(name)) return true;
+    }
+    return false;
+}
+
+function parseWaitSeconds(text: string): number {
+    const h = /(\d+)\s*h/i.exec(text)?.[1];
+    const m = /(\d+)\s*m/i.exec(text)?.[1];
+    const sec = /(\d+)\s*s/i.exec(text)?.[1];
+    return (h ? Number(h) * 3600 : 0) + (m ? Number(m) * 60 : 0) + (sec ? Number(sec) : 0);
+}
+
+function parseBlackjack(fields: { name: string; value: string; }[]): { dealer: number; player: number; soft: boolean; } | null {
+    let dealer: number | null = null;
+    let player: number | null = null;
+    let soft = false;
+    for (const field of fields) {
+        const name = field.name ?? "";
+        const dealerMatch = /Dealer\s*`?\[(\d+)(?:\+\?)?\]`?/.exec(name);
+        if (dealerMatch?.[1]) {
+            dealer = Number(dealerMatch[1]);
+            continue;
+        }
+        const playerMatch = /`?\[(\d+)\](\*?)`?/.exec(name);
+        if (playerMatch?.[1]) {
+            player = Number(playerMatch[1]);
+            soft = playerMatch[2] === "*";
+        }
+    }
+    if (dealer === null || player === null) return null;
+    return { dealer, player, soft };
+}
+
+function bestBlackjackMove(dealer: number, player: number, soft: boolean): "HIT" | "STAND" {
+    if (soft) {
+        if (player <= 17) return "HIT";
+        if (player === 18) return dealer >= 9 ? "HIT" : "STAND";
+        return "STAND";
+    }
+    if (player <= 11) return "HIT";
+    if (player === 12) return dealer >= 4 && dealer <= 6 ? "STAND" : "HIT";
+    if (player >= 13 && player <= 16) return dealer >= 2 && dealer <= 6 ? "STAND" : "HIT";
+    return "STAND";
+}
+
+async function maybePlayBlackjack(message: OwoMessage): Promise<void> {
+    if (!settings.store.blackjackEnabled) return;
+    if (!message.embeds || message.embeds.length === 0) return;
+    if (runtime.playedBlackjack.includes(message.id)) return;
+    const me = currentUser();
+    if (!me) return;
+    const embed = message.embeds[0];
+    if (!embed) return;
+    if (!(embed.author?.name?.toLowerCase() ?? "").startsWith(me.username.toLowerCase())) return;
+    if (!embed.fields?.some(f => (f.name ?? "").toLowerCase().includes("dealer"))) return;
+    const footer = embed.footer?.text ?? "";
+    if (/You won|You lost|You tied|You both bust/.test(footer)) return;
+    const parsed = parseBlackjack(embed.fields);
+    if (!parsed) {
+        log("WARN", "Blackjack: could not parse the table embed.");
+        return;
+    }
+    const move = bestBlackjackMove(parsed.dealer, parsed.player, parsed.soft);
+    log("INFO", `Blackjack: dealer ${parsed.dealer}, player ${parsed.player}${parsed.soft ? "*" : ""}, playing ${move}.`);
+    await sleep(rand(0.8, 2.2));
+    if (runtime.paused || !settings.store.masterSwitch) return;
+    runtime.playedBlackjack.push(message.id);
+    if (runtime.playedBlackjack.length > 20) runtime.playedBlackjack.shift();
+    try {
+        await RestAPI.put({
+            url: Constants.Endpoints.REACTION(message.channel_id, message.id, encodeURIComponent(move === "HIT" ? "👊" : "🛑"), "@me")
+        });
+        log("SUCCESS", `Blackjack: played ${move}.`);
+    } catch (e) {
+        logger.warn("Blackjack reaction failed", e);
+        log("ERROR", "Blackjack: reaction failed, play by hand if needed.");
+    }
+    notify();
+}
+
+function zooAnimalNames(content: string): string[] {
+    const found: string[] = [];
+    const pattern = /<a?:[a-zA-Z0-9_]+:\d+>|:[a-zA-Z0-9_]+:|[\u{1F300}-\u{1F6FF}\u{1F700}-\u{1F77F}]/gu;
+    let m: RegExpExecArray | null;
+    while ((m = pattern.exec(content)) !== null) {
+        const name = EMOJI_NAMES[m[0] ?? ""];
+        if (name) found.push(name);
+    }
+    return found;
+}
+
 export function handleMessage(message: OwoMessage): void {
     if (!message || !message.author?.id) return;
     if (handleSelfCommand(message)) return;
@@ -1212,6 +1680,7 @@ export function handleMessage(message: OwoMessage): void {
     const inScope = channels.length === 0 || channels.includes(message.channel_id);
     const mine = isForMe(message, text);
     syncCooldownTimer(text, ["hunt", "battle", "owo"]);
+    void maybePlayBlackjack(message);
     if (!mine && !inScope) return;
     if (!mine) return;
 
@@ -1219,26 +1688,69 @@ export function handleMessage(message: OwoMessage): void {
     if (/you found:|caught a|caught an/i.test(text)) {
         const st = runtime.cmdStates.get("hunt");
         if (st) st.delay = rand(s.huntCooldownMin, s.huntCooldownMax);
+        trackQuestProgress("Manually hunt");
+        for (const q of runtime.questData) {
+            if (q.completed) continue;
+            const rank = /hunt 3 animals that are\s+(\w+)/i.exec(q.description)?.[1]?.toLowerCase();
+            if (rank && (text.includes(rank) || text.includes(`:${rank}:`))) {
+                trackQuestProgress(q.description);
+            }
+        }
     }
     if (/you won|you lost|streak:|wins!/i.test(text)) {
         const st = runtime.cmdStates.get("battle");
         if (st) st.delay = rand(s.battleCooldownMin, s.battleCooldownMax);
+        if (/wins!/i.test(text)) trackQuestProgress("battle with a friend");
+        else trackQuestProgress("Battle", 1, "friend");
     }
+    if (/puts a curse on|is now cursed|is cursed/i.test(text)) {
+        log("SUCCESS", "Curse confirmed.");
+        trackQuestProgress("Have a friend curse you");
+    }
+    if (/prays for|prays\.\.\./i.test(text)) {
+        log("SUCCESS", "Pray confirmed.");
+        trackQuestProgress("Have a friend pray to you");
+    }
+    if (/gave a cookie to|sent a cookie|got a cookie from/i.test(text)) {
+        log("SUCCESS", "Cookie confirmed.");
+        trackQuestProgress("Receive a cookie from");
+        runtime.lastCookieRun = Date.now() / 1000;
+        const st = runtime.cmdStates.get("cookie");
+        if (st) {
+            st.delay = 86400;
+            st.lastRan = Date.now() / 1000;
+        }
+    }
+    if (/collected your daily|daily reward/i.test(text)) {
+        log("SUCCESS", "Daily claimed.");
+    }
+    if (EMOTE_TRIGGERS.some(t => text.includes(t))) {
+        const last = runtime.lastSentCommand.toLowerCase();
+        if (["hug", "poke", "pat", "cuddle", "kiss"].some(e => last.includes(e))) {
+            trackQuestProgress("Use an action command on someone");
+        } else {
+            trackQuestProgress("Have a friend use an action command on you");
+        }
+    }
+    const xp = /(?:\+|gained\s+)(\d+)\s*xp/i.exec(text)?.[1];
+    if (xp) trackQuestProgress("xp from", Number(xp));
     syncCash(text);
     handleGems(text, message.content ?? "");
     handleGambling(text);
-    handleHuntbot(text);
+    handleHuntbot(message, text);
     handleQuest(text);
+
+    if (/challenges you to a duel/i.test(text)) {
+        enqueue("ab", 4, null);
+        log("INFO", "Duel challenge seen, accepting via ab.");
+    }
 
     if (/too tired to run/i.test(text)) runtime.rppBlocked.run = Date.now() / 1000 + 86400;
     if (/garden is out of carrots/i.test(text)) runtime.rppBlocked.piku = Date.now() / 1000 + 86400;
     if (/no puppies/i.test(text)) runtime.rppBlocked.pup = Date.now() / 1000 + 86400;
 
-    if (/wait \d+[hms]/i.test(text) && Date.now() - runtime.lastDailySent < 20000) {
-        const h = /(\d+)\s*h/i.exec(text)?.[1];
-        const m = /(\d+)\s*m/i.exec(text)?.[1];
-        const sec = /(\d+)\s*s/i.exec(text)?.[1];
-        const total = (h ? Number(h) * 3600 : 0) + (m ? Number(m) * 60 : 0) + (sec ? Number(sec) : 0);
+    if (/wait/i.test(text) && Date.now() - runtime.lastDailySent < 20000 && /daily/i.test(text)) {
+        const total = parseWaitSeconds(text);
         if (total > 0) {
             const st = runtime.cmdStates.get("daily");
             if (st) { st.delay = total + 20; st.lastRan = Date.now() / 1000; }
@@ -1246,22 +1758,71 @@ export function handleMessage(message: OwoMessage): void {
         }
         runtime.lastDailySent = 0;
     }
+    if (/wait/i.test(text) && (Date.now() - runtime.lastCookieSent < 20000 || /cookie/i.test(text))) {
+        const total = parseWaitSeconds(text);
+        if (total > 0) {
+            const st = runtime.cmdStates.get("cookie");
+            if (st) { st.delay = total + 20; st.lastRan = Date.now() / 1000; }
+            log("COOLDOWN", "Cookie resynced.");
+        }
+        runtime.lastCookieSent = 0;
+    }
 
-    if (/you don't have enough cowoncy/i.test(text) && s.sellEnabled && Date.now() - runtime.lastSellSent > 60000) {
-        enqueue("sell all", 2, null);
+    const sellType = (s.sellType || "all").trim() || "all";
+    if ((/you don't have enough cowoncy/i.test(text) || /you do not have enough cowoncy/i.test(text)) && s.sellEnabled && Date.now() - runtime.lastSellSent > 60000) {
+        enqueue(`sell ${sellType}`, 2, null);
         log("SYS", "Low cash response, selling animals.");
     }
 
+    if (text.includes("**you must accept these rules to use the bot!**")) {
+        log("WARN", "OwO asks to accept its rules. Accept once by hand, buttons cannot be auto clicked here.");
+    }
+
+    if (/you do not have an active battle team/i.test(text)) {
+        runtime.zooPending = true;
+        enqueue("zoo", 2, null);
+        log("SYS", "No battle team, checking zoo.");
+    }
+    if (/zoo!/i.test(text) && runtime.zooPending && headerMentionsMe(message)) {
+        runtime.zooPending = false;
+        const animals = zooAnimalNames(message.content ?? "").reverse().slice(0, 3);
+        for (const animal of animals) {
+            enqueue(`team add ${animal}`, 2, null);
+        }
+        if (animals.length > 0) log("SUCCESS", `Battle team set: ${animals.join(", ")}.`);
+        else log("WARN", "Zoo had no known animals, set the team by hand.");
+    }
+
+    const bought = /you bought a.*?for \*\*(\d+)\*\*/i.exec(text)?.[1];
+    if (bought) {
+        runtime.cash = Math.max(0, runtime.cash - Number(bought));
+        log("SUCCESS", `Shop: bought item for ${Number(bought).toLocaleString()}, balance now ${runtime.cash.toLocaleString()}.`);
+    }
+
     const now = Date.now();
-    if (s.crateEnabled && /weapon crate/i.test(text) && /received|found/i.test(text) && now - runtime.lastCrateOpened > 3600000) {
-        runtime.lastCrateOpened = now;
-        enqueue("owo wc all", 2, null);
+    const crateSuffix = ((s.crateType || "all").trim() || "all").toLowerCase();
+    if (s.crateEnabled && (/received a/i.test(text) || /found a/i.test(text)) && /weapon crate/i.test(text) && now >= runtime.crateCooldownUntil) {
+        runtime.crateCooldownUntil = now + 10000;
+        enqueue(`crate ${crateSuffix === "" ? "all" : crateSuffix}`, 4, null);
         log("SYS", "Opening weapon crates.");
     }
-    if (s.lootboxEnabled && /lootbox/i.test(text) && /received|found/i.test(text) && now - runtime.lastLootboxOpened > 60000) {
-        runtime.lastLootboxOpened = now;
-        enqueue("owo lb all", 2, null);
+    const lootboxSuffix = ((s.lootboxType || "all").trim() || "all").toLowerCase();
+    if (s.lootboxEnabled && (/received a/i.test(text) || /found a/i.test(text)) && /lootbox/i.test(text) && now >= runtime.lootboxCooldownUntil) {
+        runtime.lootboxCooldownUntil = now + 10000;
+        enqueue(`lootbox ${lootboxSuffix === "" ? "all" : lootboxSuffix}`, 4, null);
         log("SYS", "Opening lootboxes.");
+    }
+    if (/you don't have any lootboxes|no lootboxes/i.test(text)) {
+        runtime.lootboxCooldownUntil = now + 3600000;
+        log("COOLDOWN", "No lootboxes, pausing opens for 1h.");
+    }
+    if (/you don't have any crates|no weapon crates/i.test(text)) {
+        runtime.crateCooldownUntil = now + 86400000;
+        log("COOLDOWN", "No crates, pausing opens for 24h.");
+    }
+    if (/resets in/i.test(text) && /weapon crate/i.test(text)) {
+        const total = parseWaitSeconds(text);
+        if (total > 0) runtime.crateCooldownUntil = now + total * 1000 + 10000;
     }
 
     if (s.giveawayEnabled && /giveaway/i.test(text)) {

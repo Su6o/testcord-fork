@@ -51,19 +51,20 @@ export const settings = definePluginSettings({
         description: "Pray target user IDs, comma separated. Empty means pray yourself.",
         default: ""
     },
+    prayPing: { type: OptionType.BOOLEAN, description: "Ping pray targets with a mention.", default: true },
     curseEnabled: { type: OptionType.BOOLEAN, description: "Auto curse on a timer.", default: false },
     curseTargets: {
         type: OptionType.STRING,
         description: "Curse target user IDs, comma separated.",
         default: ""
     },
+    cursePing: { type: OptionType.BOOLEAN, description: "Ping curse targets with a mention.", default: true },
     cursePrayCooldownMin: { type: OptionType.NUMBER, description: "Curse and pray shared cooldown minimum (seconds).", default: 310 },
     cursePrayCooldownMax: { type: OptionType.NUMBER, description: "Curse and pray shared cooldown maximum (seconds).", default: 400 },
 
     dailyEnabled: { type: OptionType.BOOLEAN, description: "Claim daily automatically.", default: true },
     cookieEnabled: { type: OptionType.BOOLEAN, description: "Send cookies automatically.", default: false },
     cookieTarget: { type: OptionType.STRING, description: "User ID to send cookies to.", default: "" },
-
     rppEnabled: { type: OptionType.BOOLEAN, description: "Run rpp commands (run, pup, piku) on a timer.", default: true },
     rppInterval: { type: OptionType.NUMBER, description: "Seconds between rpp commands.", default: 60 },
 
@@ -74,6 +75,12 @@ export const settings = definePluginSettings({
     huntbotEnabled: { type: OptionType.BOOLEAN, description: "Run autohunt and manage huntbot.", default: true },
     huntbotCash: { type: OptionType.NUMBER, description: "Cowoncy to spend per huntbot run.", default: 3000 },
     huntbotUpgradeEnabled: { type: OptionType.BOOLEAN, description: "Auto spend essence on huntbot upgrades.", default: true },
+    huntbotPrioEfficiency: { type: OptionType.NUMBER, description: "Upgrade priority for efficiency.", default: 4 },
+    huntbotPrioDuration: { type: OptionType.NUMBER, description: "Upgrade priority for duration.", default: 2 },
+    huntbotPrioCost: { type: OptionType.NUMBER, description: "Upgrade priority for cost.", default: 5 },
+    huntbotPrioGain: { type: OptionType.NUMBER, description: "Upgrade priority for gain.", default: 4 },
+    huntbotPrioExp: { type: OptionType.NUMBER, description: "Upgrade priority for experience.", default: 3 },
+    huntbotPrioRadar: { type: OptionType.NUMBER, description: "Upgrade priority for radar.", default: 1 },
 
     gemsEnabled: { type: OptionType.BOOLEAN, description: "Auto equip gems when hunts run unempowered.", default: true },
     gemsLowestFirst: { type: OptionType.BOOLEAN, description: "Use lowest tier gems first instead of highest.", default: false },
@@ -110,15 +117,19 @@ export const settings = definePluginSettings({
 
     sellEnabled: { type: OptionType.BOOLEAN, description: "Auto sell animals on a timer.", default: false },
     sellIntervalMin: { type: OptionType.NUMBER, description: "Minutes between auto sells.", default: 20 },
+    sellType: { type: OptionType.STRING, description: "What to sell (all or an animal name).", default: "all" },
     sacrificeEnabled: { type: OptionType.BOOLEAN, description: "Auto sacrifice animals on a timer.", default: false },
     sacrificeIntervalMin: { type: OptionType.NUMBER, description: "Minutes between auto sacrifices.", default: 60 },
+    sacrificeType: { type: OptionType.STRING, description: "What to sacrifice (all or an animal name).", default: "all" },
 
     shopEnabled: { type: OptionType.BOOLEAN, description: "Auto buy weapons from the shop.", default: true },
     shopItems: { type: OptionType.NUMBER, description: "Weapon tier to buy (1 to 7).", default: 1 },
     shopCooldown: { type: OptionType.NUMBER, description: "Seconds between shop buys.", default: 3600 },
 
     crateEnabled: { type: OptionType.BOOLEAN, description: "Auto open weapon crates when found.", default: false },
+    crateType: { type: OptionType.STRING, description: "How many crates to open (all or a number).", default: "all" },
     lootboxEnabled: { type: OptionType.BOOLEAN, description: "Auto open lootboxes when found.", default: false },
+    lootboxType: { type: OptionType.STRING, description: "How many lootboxes to open (all or a number).", default: "all" },
 
     giveawayEnabled: { type: OptionType.BOOLEAN, description: "Detect OwO giveaways and notify you.", default: true },
 
@@ -185,15 +196,15 @@ export interface OwoSettingGroup {
 export const SETTING_GROUPS: readonly OwoSettingGroup[] = [
     { title: "General", keys: ["masterSwitch", "owoBotId", "prefix", "fallbackChannels", "useShortform"] },
     { title: "Grind", keys: ["huntEnabled", "huntCooldownMin", "huntCooldownMax", "battleEnabled", "battleCooldownMin", "battleCooldownMax", "owoEnabled", "owoCooldownMin", "owoCooldownMax"] },
-    { title: "Curse and Pray", keys: ["prayEnabled", "prayTargets", "curseEnabled", "curseTargets", "cursePrayCooldownMin", "cursePrayCooldownMax"] },
+    { title: "Curse and Pray", keys: ["prayEnabled", "prayTargets", "prayPing", "curseEnabled", "curseTargets", "cursePing", "cursePrayCooldownMin", "cursePrayCooldownMax"] },
     { title: "Daily and Cookie", keys: ["dailyEnabled", "cookieEnabled", "cookieTarget"] },
     { title: "Run Pup Piku", keys: ["rppEnabled", "rppInterval"] },
     { title: "Quests", keys: ["questEnabled", "questAutoSolve", "questIntervalH"] },
-    { title: "Huntbot", keys: ["huntbotEnabled", "huntbotCash", "huntbotUpgradeEnabled"] },
+    { title: "Huntbot", keys: ["huntbotEnabled", "huntbotCash", "huntbotUpgradeEnabled", "huntbotPrioEfficiency", "huntbotPrioDuration", "huntbotPrioCost", "huntbotPrioGain", "huntbotPrioExp", "huntbotPrioRadar"] },
     { title: "Gems", keys: ["gemsEnabled", "gemsLowestFirst", "gemsUseSet", "gemsAllowFabled", "gemsAllowLegendary", "gemsAllowSpecial"] },
     { title: "Gambling", keys: ["coinflipEnabled", "coinflipAmount", "coinflipSide", "slotsEnabled", "slotsAmount", "blackjackEnabled", "blackjackAmount", "gambleStrategy", "gambleMinBalance", "gambleMaxBalance", "gambleMaxBet"] },
-    { title: "Sell and Sacrifice", keys: ["sellEnabled", "sellIntervalMin", "sacrificeEnabled", "sacrificeIntervalMin"] },
-    { title: "Shop and Loot", keys: ["shopEnabled", "shopItems", "shopCooldown", "crateEnabled", "lootboxEnabled"] },
+    { title: "Sell and Sacrifice", keys: ["sellEnabled", "sellIntervalMin", "sellType", "sacrificeEnabled", "sacrificeIntervalMin", "sacrificeType"] },
+    { title: "Shop and Loot", keys: ["shopEnabled", "shopItems", "shopCooldown", "crateEnabled", "crateType", "lootboxEnabled", "lootboxType"] },
     { title: "Giveaway and Boss", keys: ["giveawayEnabled", "bossEnabled"] },
     { title: "Level Grind", keys: ["levelGrindEnabled", "levelGrindMin", "levelGrindMax"] },
     { title: "Channel Rotation", keys: ["autochannelEnabled", "autochannelMin", "autochannelMax"] },

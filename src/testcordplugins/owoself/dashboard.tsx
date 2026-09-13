@@ -11,7 +11,7 @@ import { Button, Forms, Text, TextInput, useEffect, useState } from "@webpack/co
 import type { ReactNode } from "react";
 
 import { decodeTokenUserId, deleteProfile, getProfiles, newProfileId, type OwoProfile,parseChannelList, saveProfiles, upsertProfile } from "./accounts";
-import { addGrindChannel, channelLabel, getChannelOptions, getChannels, getLogs, pauseEngine, refreshScheduler, reloadProfiles, removeGrindChannel, resumeEngine, runtime, sendManual, setActiveChannel, setMasterOn, snapshot } from "./engine";
+import { addGrindChannel, channelLabel, fireNow, getChannelOptions, getChannels, getLogs, pauseEngine, refreshScheduler, reloadProfiles, removeGrindChannel, resumeEngine, runtime, sendManual, setActiveChannel, setMasterOn, snapshot, solveQuest } from "./engine";
 import { type OwoSelectKey, type OwoSettings, type OwoStoreKey,SELECT_KEYS, SETTING_GROUPS, settings } from "./settings";
 
 export function openDashboard(): void {
@@ -54,6 +54,44 @@ function Card({ children }: { children: ReactNode; }) {
     );
 }
 
+function Section({ title, right, children, defaultOpen = true }: { title: string; right?: ReactNode; children: ReactNode; defaultOpen?: boolean; }) {
+    const [open, setOpen] = useState(defaultOpen);
+    return (
+        <div style={{ background: "var(--background-secondary)", borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <Text variant="heading-md/semibold" style={{ flex: 1 }}>{title}</Text>
+                {right}
+                <Button size={Button.Sizes.SMALL} color={Button.Colors.PRIMARY} onClick={() => setOpen(o => !o)}>
+                    {open ? "▾" : "▸"}
+                </Button>
+            </div>
+            {open && children}
+        </div>
+    );
+}
+
+function CashSparkline() {
+    const hist = runtime.cashHistory;
+    if (hist.length < 2) return <Forms.FormText>Balance history appears here once OwO reports your cowoncy.</Forms.FormText>;
+    const w = 260;
+    const h = 48;
+    const vals = hist.map(p => p[1]);
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const span = max - min || 1;
+    const pts = hist.map((p, i) => `${(i / (hist.length - 1)) * w},${h - ((p[1] - min) / span) * (h - 6) - 3}`).join(" ");
+    const first = vals[0] ?? 0;
+    const last = vals[vals.length - 1] ?? 0;
+    return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <svg width="100%" height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ background: "var(--background-tertiary)", borderRadius: 8 }}>
+                <polyline points={pts} fill="none" stroke={last >= first ? "var(--status-positive)" : "var(--status-danger)"} strokeWidth={2} />
+            </svg>
+            <Forms.FormText>{first.toLocaleString()} → {last.toLocaleString()} cowoncy</Forms.FormText>
+        </div>
+    );
+}
+
 function Stat({ label, value, accent }: { label: string; value: string; accent?: string; }) {
     return (
         <div style={{ background: "var(--background-secondary)", borderRadius: 10, padding: "10px 12px", minWidth: 105, flex: "1 1 105px", borderTop: accent ? `3px solid ${accent}` : undefined }}>
@@ -90,9 +128,9 @@ function ChannelsCard({ bump }: { bump: () => void; }) {
     const [draft, setDraft] = useState("");
     const options = getChannelOptions();
     return (
-        <Card>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <Text variant="heading-md/semibold" style={{ flex: 1 }}>Grind channels</Text>
+        <Section
+            title="Grind channels"
+            right={(
                 <Button
                     size={Button.Sizes.SMALL}
                     color={Button.Colors.BRAND}
@@ -109,7 +147,8 @@ function ChannelsCard({ bump }: { bump: () => void; }) {
                 >
                     Add open channel
                 </Button>
-            </div>
+            )}
+        >
             {options.length === 0 && <Forms.FormText>No channels yet. Add one below or press Add open channel.</Forms.FormText>}
             {options.map(o => (
                 <div key={o.id} style={{ display: "flex", gap: 8, alignItems: "center", background: "var(--background-tertiary)", borderRadius: 8, padding: "6px 10px" }}>
@@ -147,7 +186,7 @@ function ChannelsCard({ bump }: { bump: () => void; }) {
                     Add
                 </Button>
             </div>
-        </Card>
+        </Section>
     );
 }
 
@@ -183,6 +222,9 @@ function OverviewTab({ refreshKey, bump }: { refreshKey: number; bump: () => voi
                 <Stat label="Warnings" value={String(snap.warnings)} />
                 <Stat label="Next quest" value={snap.nextQuestTimer ?? "Unknown"} />
             </div>
+            <Section title="Cowoncy history">
+                <CashSparkline />
+            </Section>
             <ChannelsCard bump={bump} />
             <Forms.FormText>
                 Tip: type owoself start, stop, status or dashboard in any channel. The trigger message deletes itself.
@@ -249,46 +291,50 @@ function AccountsTab({ refreshKey, bump }: { refreshKey: number; bump: () => voi
             <Forms.FormText>
                 Multi account profiles. Only the profile matching your current login grinds here. Extra tokens stay saved and activate when you switch accounts.
             </Forms.FormText>
-            {profiles.map(p => (
-                <Card key={p.id}>
-                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <span
-                            style={{ width: 9, height: 9, borderRadius: "50%", flexShrink: 0, background: p.enabled ? "var(--status-positive)" : "var(--interactive-muted)" }}
+            {profiles.map(p => {
+                const active = runtime.activeProfile?.id === p.id;
+                const title = `${p.name}${p.userId === "" ? " (id unknown)" : ""}${active ? " (grinding)" : ""}`;
+                return (
+                    <Section
+                        key={p.id}
+                        title={title}
+                        right={(
+                            <>
+                                <Button
+                                    size={Button.Sizes.SMALL}
+                                    color={p.enabled ? Button.Colors.GREEN : Button.Colors.PRIMARY}
+                                    onClick={() => { void upsertProfile({ ...p, enabled: !p.enabled }).then(() => reload()); }}
+                                >
+                                    {p.enabled ? "On" : "Off"}
+                                </Button>
+                                <Button
+                                    size={Button.Sizes.SMALL}
+                                    color={Button.Colors.RED}
+                                    onClick={() => { void deleteProfile(p.id).then(() => reload()); }}
+                                >
+                                    Delete
+                                </Button>
+                            </>
+                        )}
+                    >
+                        <Forms.FormText>Channels: {p.channels.length > 0 ? p.channels.map(channelLabel).join(" | ") : "none"}</Forms.FormText>
+                        <TextInput
+                            defaultValue={p.channels.join(", ")}
+                            placeholder="Channel IDs, comma separated"
+                            onChange={v => { p.channels = parseChannelList(v); }}
+                            onBlur={() => { void upsertProfile({ ...p }).then(() => reload()); }}
                         />
-                        <Text variant="heading-md/semibold" style={{ flex: 1 }}>{p.name}{p.userId === "" ? " (id unknown)" : ""}</Text>
-                        <Button
-                            size={Button.Sizes.SMALL}
-                            color={p.enabled ? Button.Colors.GREEN : Button.Colors.PRIMARY}
-                            onClick={() => { void upsertProfile({ ...p, enabled: !p.enabled }).then(() => reload()); }}
-                        >
-                            {p.enabled ? "On" : "Off"}
-                        </Button>
-                        <Button
-                            size={Button.Sizes.SMALL}
-                            color={Button.Colors.RED}
-                            onClick={() => { void deleteProfile(p.id).then(() => reload()); }}
-                        >
-                            Delete
-                        </Button>
-                    </div>
-                    <Forms.FormText>Channels: {p.channels.length > 0 ? p.channels.map(channelLabel).join(" | ") : "none"}</Forms.FormText>
-                    <TextInput
-                        defaultValue={p.channels.join(", ")}
-                        placeholder="Channel IDs, comma separated"
-                        onChange={v => { p.channels = parseChannelList(v); }}
-                        onBlur={() => { void upsertProfile({ ...p }).then(() => reload()); }}
-                    />
-                </Card>
-            ))}
-            <Card>
-                <Text variant="heading-md/semibold">Add profile</Text>
+                    </Section>
+                );
+            })}
+            <Section title="Add profile" defaultOpen={false}>
                 <TextInput value={name} onChange={setName} placeholder="Name (optional)" />
                 <TextInput value={token} onChange={setToken} placeholder="Token" />
                 <TextInput value={channels} onChange={setChannels} placeholder="Channel IDs, comma separated" />
                 <Button color={Button.Colors.BRAND} onClick={() => { void add(); }}>Add profile</Button>
-            </Card>
-            <Card>
-                <Text variant="heading-md/semibold">Bulk import (one per line: token or name | token | channels)</Text>
+            </Section>
+            <Section title="Bulk import and export" defaultOpen={false}>
+                <Forms.FormText>One per line: token or name | token | channels</Forms.FormText>
                 <TextInput value={bulk} onChange={setBulk} placeholder={"token...\nalt | token... | 123, 456"} />
                 <div style={{ display: "flex", gap: 8 }}>
                     <Button color={Button.Colors.PRIMARY} onClick={() => { void importBulk(); }}>Import</Button>
@@ -299,7 +345,7 @@ function AccountsTab({ refreshKey, bump }: { refreshKey: number; bump: () => voi
                         Export
                     </Button>
                 </div>
-            </Card>
+            </Section>
             <Forms.FormText>Fallback channels (plugin settings): {getChannels().join(", ") || "none"}</Forms.FormText>
         </div>
     );
@@ -316,8 +362,7 @@ function CommandsTab() {
     const snap = snapshot();
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <Card>
-                <Text variant="heading-md/semibold">Send now</Text>
+            <Section title="Send now">
                 <div style={{ display: "flex", gap: 8 }}>
                     <div style={{ flex: 1 }}>
                         <TextInput value={manual} onChange={setManual} placeholder="owo hunt" />
@@ -341,23 +386,25 @@ function CommandsTab() {
                     <Button size={Button.Sizes.SMALL} onClick={() => { void sendManual("owo cash"); }}>Cash</Button>
                     <Button size={Button.Sizes.SMALL} onClick={() => { void sendManual("owo inv"); }}>Inventory</Button>
                 </div>
-            </Card>
-            <Card>
-                <Text variant="heading-md/semibold">Scheduler ({snap.activeCmds.length})</Text>
+            </Section>
+            <Section title={`Scheduler (${snap.activeCmds.length})`}>
                 {snap.activeCmds.map(c => {
                     const pct = c.delay > 0 ? ((c.delay - c.remaining) / c.delay) * 100 : 100;
                     return (
                         <div key={c.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                            <div style={{ display: "flex", gap: 8 }}>
+                            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                                 <Text variant="text-md/semibold" style={{ flex: 1 }}>{c.id}</Text>
                                 <Forms.FormText>due in {c.remaining}s of {c.delay}s</Forms.FormText>
+                                <Button size={Button.Sizes.SMALL} color={Button.Colors.BRAND} onClick={() => fireNow(c.id)}>
+                                    Fire now
+                                </Button>
                             </div>
                             <ProgressBar pct={pct} />
                         </div>
                     );
                 })}
                 {snap.activeCmds.length === 0 && <Forms.FormText>No loops registered. Press Start or enable features in plugin settings.</Forms.FormText>}
-            </Card>
+            </Section>
         </div>
     );
 }
@@ -371,15 +418,22 @@ function QuestsTab({ refreshKey }: { refreshKey: number; }) {
             {snap.questData.map((q, i) => {
                 const pct = q.total > 0 ? (q.current / q.total) * 100 : 0;
                 return (
-                    <Card key={`${i}-${q.description}`}>
-                        <Text variant="text-md/semibold">{q.completed ? "Done: " : ""}{q.description}</Text>
+                    <Section
+                        key={`${i}-${q.description}`}
+                        title={`${q.completed ? "Done: " : ""}${q.description}`}
+                        right={!q.completed ? (
+                            <Button size={Button.Sizes.SMALL} color={Button.Colors.BRAND} onClick={() => solveQuest(i)}>
+                                Solve
+                            </Button>
+                        ) : undefined}
+                    >
                         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                             <div style={{ flex: 1 }}>
                                 <ProgressBar pct={pct} color={q.completed ? "var(--status-positive)" : undefined} />
                             </div>
                             <Forms.FormText>{q.current}/{q.total}</Forms.FormText>
                         </div>
-                    </Card>
+                    </Section>
                 );
             })}
             {snap.questData.length === 0 && <Forms.FormText>No quest data yet. The engine fills this in after the next quest poll.</Forms.FormText>}
@@ -401,19 +455,15 @@ function SecurityTab({ refreshKey }: { refreshKey: number; }) {
             </div>
             {pending
                 ? (
-                    <Card>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            <span style={{ width: 10, height: 10, borderRadius: "50%", background: "var(--status-danger)" }} />
-                            <Text variant="heading-md/semibold" style={{ flex: 1 }}>Captcha needs you</Text>
-                        </div>
+                    <Section title="Captcha needs you">
                         <Forms.FormText>{pending.detail}</Forms.FormText>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                             <Button color={Button.Colors.BRAND} onClick={() => openExternal(pending.url)}>Open solve URL</Button>
                             <Button color={Button.Colors.GREEN} onClick={() => resumeEngine()}>I solved it, resume</Button>
                         </div>
-                    </Card>
+                    </Section>
                 )
-                : <Forms.FormText>No pending captcha. Detection covers link captchas, letterword images, warnings and bans.</Forms.FormText>}
+                : <Forms.FormText>No pending captcha. Detection covers link captchas, button captchas, letterword images, warnings and bans.</Forms.FormText>}
             <Forms.FormText>
                 Solver: {settings.store.captchaSolverEnabled ? `${settings.store.captchaService} (manual fallback always on)` : "manual only"}.
                 Image and huntbot password captchas pause the engine and wait for you.
@@ -554,10 +604,9 @@ function SettingsTab({ bump }: { bump: () => void; }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <Forms.FormText>Every plugin setting, editable without leaving Discord. Changes apply to the scheduler immediately.</Forms.FormText>
             {SETTING_GROUPS.map(group => (
-                <Card key={group.title}>
-                    <Text variant="heading-md/semibold">{group.title}</Text>
+                <Section key={group.title} title={group.title} defaultOpen={group.title === "General"}>
                     {group.keys.map(key => <SettingRow key={key} name={key} onChanged={bump} />)}
-                </Card>
+                </Section>
             ))}
         </div>
     );
