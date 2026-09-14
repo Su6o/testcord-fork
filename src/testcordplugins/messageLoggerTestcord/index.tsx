@@ -599,6 +599,8 @@ export default definePlugin({
     },
 
     getEdited(m1: any, m2: any) {
+        const clearedId = (m2 as any)?.id ?? (m1 as any)?.id;
+        if (typeof clearedId === "string" && isEditHistoryTempCleared(clearedId)) return [];
         if (!settings.store.showEditHistory) return m2?.editHistory;
         const editHistory = m2?.editHistory ?? (m1?.editHistory?.length ? m1.editHistory.map(renderApi.mapTimestamp) : undefined);
         return editHistory;
@@ -751,8 +753,16 @@ export default definePlugin({
                     // Deleted messages use hidden flag, not tempCleared – fall through to normal handling
                 } else {
                     const latest = oldGetMessage!.call(MessageStore, channelId, messageId) as any;
-                    if (latest) return latest;
-                    return oldGetMessage!.call(MessageStore, channelId, messageId);
+                    // Discord's cached copy may still carry editHistory injected by
+                    // processMessageFetch before the temp clear – strip it so the
+                    // message renders without history.
+                    if (latest?.editHistory?.length) {
+                        try {
+                            if (typeof latest.set === "function") return latest.set("editHistory", []);
+                            return { ...latest, editHistory: [] };
+                        } catch { }
+                    }
+                    return latest;
                 }
             }
 

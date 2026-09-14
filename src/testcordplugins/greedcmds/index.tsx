@@ -22,7 +22,7 @@ const settings = definePluginSettings({
     },
     enableUwulockRemove: {
         type: OptionType.BOOLEAN,
-        description: "Automatically remove uwulock when someone applies it to you or protected users. Triggers on ,uwulock <@user> and sends ,uwulock remove <@user>.",
+        description: "Automatically remove uwulock and restore protect when someone applies uwulock to you or protected users. Triggers on prefix, slash, and Greed confirmations; sends ,uwulock remove plus ,uwulock protect add.",
         default: true
     },
     enableCounterTo: {
@@ -52,7 +52,7 @@ const settings = definePluginSettings({
     },
     enableAutoUwulock: {
         type: OptionType.BOOLEAN,
-        description: "Keep watched users uwulocked. When someone removes their uwulock via prefix or slash command, instantly send ,uwulock add to re-lock them. If Greed refuses to lock them, their protect is stripped first. Manage the list with /autouwulock.",
+        description: "Keep watched users uwulocked. When someone removes their uwulock or sneaks a protect add on them (which strips uwulock) via prefix or slash command, instantly strip protect and send ,uwulock add to re-lock them. If Greed refuses to lock them, their protect is stripped first. Manage the list with /autouwulock.",
         default: true
     },
     enableAutoSpread: {
@@ -191,6 +191,7 @@ function sendBotCommand(channelId: string, content: string) {
 }
 
 const PROTECT_REMOVE_RE = /^\s*,uwulock\s+protect\s+remove\b/i;
+const PROTECT_ADD_RE = /^\s*,uwulock\s+protect\s+add\b/i;
 const UWULOCK_REMOVE_RE = /^\s*,uwulock\s+remove\b/i;
 const ATTACK_PREFIXES = [
     /^\s*,uwulock\b/i,
@@ -208,7 +209,11 @@ function isPlainUwulock(content: string): boolean {
 }
 
 const SLASH_UNLOCK_RE = /\/uwulock\b.{0,80}\bremov/i;
+const SLASH_PROTECT_ADD_RE = /\/uwulock\b.{0,80}\bprotect\b.{0,80}\badd/i;
+const SLASH_LOCK_RE = /\/uwulock\b.{0,80}\badd/i;
 const BOT_UNLOCK_SIGNAL_RE = /remov|unlock|un[\s-]*uwu/i;
+const BOT_PROTECT_ADD_SIGNAL_RE = /protect.{0,40}(add|enabled|on)|now protected|has been protected|successfully protected/i;
+const BOT_LOCK_SIGNAL_RE = /added\b.{0,80}\buwulock|now (uwulocked|locked)|has been (uwulocked|locked)|successfully (uwulocked|locked)/i;
 const FAILSAFE_WINDOW_MS = 8_000;
 const FAILSAFE_RETRY_COOLDOWN_MS = 60_000;
 const UWULOCK_FAIL_RE = /can['’]?t|cannot|couldn['’]?t|fail|unable|error|already protected|is protected|remove.{0,40}protect/i;
@@ -234,6 +239,14 @@ function getInteractionUserId(message: any): string | undefined {
 
 function getUnlockAttackerId(message: any, content: string, isBot: boolean): string | undefined {
     if (!isBot && content && (UWULOCK_REMOVE_RE.test(content) || SLASH_UNLOCK_RE.test(content))) {
+        const id = message?.author?.id;
+        if (typeof id === "string" && /^\d{5,22}$/.test(id)) return id;
+    }
+    return getInteractionUserId(message);
+}
+
+function getProtectAddAttackerId(message: any, content: string, isBot: boolean): string | undefined {
+    if (!isBot && content && (PROTECT_ADD_RE.test(content) || SLASH_PROTECT_ADD_RE.test(content))) {
         const id = message?.author?.id;
         if (typeof id === "string" && /^\d{5,22}$/.test(id)) return id;
     }
@@ -295,6 +308,39 @@ function isUnlockEvent(message: any): boolean {
     return false;
 }
 
+function isProtectAddEvent(message: any): boolean {
+    const text = getSearchableText(message);
+    if (text && PROTECT_ADD_RE.test(text)) return true;
+    if (text && SLASH_PROTECT_ADD_RE.test(text)) return true;
+    const interactionName = getInteractionName(message);
+    if (/uwulock/i.test(interactionName)) {
+        if (/protect/i.test(interactionName) && /add/i.test(interactionName)) return true;
+        if (text && /uwulock/i.test(text) && /protect/i.test(text) && /add/i.test(text)) return true;
+        const raw = JSON.stringify(message.interaction ?? message.interactionMetadata ?? message.interaction_metadata ?? {}).slice(0, 1000);
+        if (/protect/i.test(raw) && /add/i.test(raw)) return true;
+    }
+    if (message?.author?.bot && text && /protect/i.test(text) && BOT_PROTECT_ADD_SIGNAL_RE.test(text)) return true;
+    return false;
+}
+
+function isLockEvent(message: any): boolean {
+    const text = getSearchableText(message);
+    if (!text) return false;
+    // Prefix invocations are handled by the prefix self-defense block; only catch slash/interaction/bot here.
+    if (PROTECT_ADD_RE.test(text) || SLASH_PROTECT_ADD_RE.test(text)) return false;
+    if (SLASH_LOCK_RE.test(text)) return true;
+    const interactionName = getInteractionName(message);
+    if (/uwulock/i.test(interactionName)) {
+        if (/protect/i.test(interactionName)) return false;
+        if (/\badd\b/i.test(interactionName)) return true;
+        const raw = JSON.stringify(message.interaction ?? message.interactionMetadata ?? message.interaction_metadata ?? {}).slice(0, 1000);
+        if (/\badd\b/i.test(raw)) return true;
+    }
+    // Greed bot confirmation, e.g. ":approve: @attacker: Added <name> to uwulock."
+    if (message?.author?.bot && /uwulock/i.test(text) && BOT_LOCK_SIGNAL_RE.test(text) && !UWULOCK_FAIL_RE.test(text)) return true;
+    return false;
+}
+
 function handleMessage(message: any) {
     if (!message?.author?.id) return;
     if (!message.channel_id) return;
@@ -326,10 +372,11 @@ function handleMessage(message: any) {
                 }
             }
 
-            // 2. Uwulock remove: ,uwulock <@target> -> ,uwulock remove <@target>
+            // 2. Uwulock remove: ,uwulock <@target> -> remove the lock and restore protect
             if (settings.store.enableUwulockRemove && isPlainUwulock(content)) {
                 for (const tid of targeted) {
                     sendBotCommand(message.channel_id, `,uwulock remove <@${tid}>`);
+                    sendBotCommand(message.channel_id, `,uwulock protect add <@${tid}>`);
                 }
             }
 
@@ -351,7 +398,21 @@ function handleMessage(message: any) {
         }
     }
 
-    // 5. Auto uwulock: re-lock watched users when someone unlocks them via prefix, slash, or bot confirmation.
+    // 2b. Uwulock remove self-defense for slash/bot confirmations: Greed confirms
+    // e.g. ":approve: @attacker: Added <name> to uwulock." Strip it and re-protect.
+    if (settings.store.enableUwulockRemove && isLockEvent(message)) {
+        const protectedIds = getProtectedIds();
+        const targeted = getTargetedIds(message, protectedIds, guildId);
+        if (targeted.length > 0) {
+            for (const tid of targeted) {
+                sendBotCommand(message.channel_id, `,uwulock remove <@${tid}>`);
+                sendBotCommand(message.channel_id, `,uwulock protect add <@${tid}>`);
+            }
+        }
+    }
+
+    // 5. Auto uwulock: re-lock watched users when someone unlocks them or sneaks a
+    // protect-add on them (which strips uwulock) via prefix, slash, or bot confirmation.
     if (settings.store.enableAutoUwulock) {
         const watched = getAutoUwulockIds();
         if (watched.size > 0) {
@@ -371,6 +432,29 @@ function handleMessage(message: any) {
                     // 6. Auto spread: punish the admin who unlocked a watched user.
                     if (settings.store.enableAutoSpread) {
                         const attackerId = getUnlockAttackerId(message, content, isBot);
+                        const protectedIds = getProtectedIds();
+                        if (attackerId && !targeted.includes(attackerId) && !protectedIds.has(attackerId)) {
+                            if (!watched.has(attackerId)) {
+                                watched.add(attackerId);
+                                settings.store.autoUwulockUserIds = [...watched].join(", ");
+                            }
+                            sendBotCommand(message.channel_id, `,uwulock protect remove <@${attackerId}>`);
+                            sendBotCommand(message.channel_id, `,uwulock add <@${attackerId}>`);
+                        }
+                    }
+                }
+            } else if (isProtectAddEvent(message)) {
+                // 5b. Protect-add bypass: protecting a watched user strips their uwulock,
+                // so strip the protection and re-lock them instantly.
+                const targeted = getTargetedIds(message, watched, guildId);
+                if (targeted.length > 0) {
+                    for (const tid of targeted) {
+                        sendBotCommand(message.channel_id, `,uwulock protect remove <@${tid}>`);
+                        sendBotCommand(message.channel_id, `,uwulock add <@${tid}>`);
+                    }
+                    // 6. Auto spread: punish the admin who protected a watched user.
+                    if (settings.store.enableAutoSpread) {
+                        const attackerId = getProtectAddAttackerId(message, content, isBot);
                         const protectedIds = getProtectedIds();
                         if (attackerId && !targeted.includes(attackerId) && !protectedIds.has(attackerId)) {
                             if (!watched.has(attackerId)) {

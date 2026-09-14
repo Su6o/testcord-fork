@@ -57,6 +57,31 @@ const settings = definePluginSettings({
         description: "Automatically increase delay when hitting rate limits. Prevents 429 errors.",
         default: true,
     },
+    ensureCompleteImport: {
+        type: OptionType.BOOLEAN,
+        description: "Re-check favorites after importing and re-add any missing GIFs until fully imported.",
+        default: true,
+    },
+    maxRetryPasses: {
+        type: OptionType.NUMBER,
+        description: "How many extra passes to re-add missing GIFs when ensuring a complete import.",
+        default: 3,
+    },
+    retryPassDelay: {
+        type: OptionType.NUMBER,
+        description: "Wait between verification passes when ensuring a complete import (ms).",
+        default: 2000,
+    },
+    settleWatch: {
+        type: OptionType.BOOLEAN,
+        description: "Keep watching favorites after importing and re-add any GIFs Discord removes.",
+        default: true,
+    },
+    settleWatchDuration: {
+        type: OptionType.NUMBER,
+        description: "How long to watch favorites for late removals after importing (ms).",
+        default: 15000,
+    },
 });
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -83,17 +108,24 @@ function getCurrentGifs(): Record<string, GifEntry> {
     return {};
 }
 
-function getAddGifFn(): ((gif: any) => void) | null {
+function getAddGifFn(): ((gif: any) => Promise<void>) | null {
     const actions = getFrecencyActions();
     if (!actions || typeof actions.updateAsync !== "function") return null;
 
-    return (gif: any) => {
+    let nextOrder: number | null = null;
+
+    return async (gif: any) => {
         const existing = getCurrentGifs();
         const orders = Object.values(existing).map((g: any) => g?.order ?? 0);
-        const maxOrder = orders.length > 0 ? Math.max(...orders) : 0;
-        const newOrder = maxOrder + 1;
+        const storeMax = orders.length > 0 ? Math.max(...orders) : 0;
+        if (nextOrder === null) {
+            nextOrder = storeMax + 1;
+        } else {
+            nextOrder = Math.max(nextOrder + 1, storeMax + 1);
+        }
+        const orderToUse = nextOrder;
 
-        actions.updateAsync(
+        await actions.updateAsync(
             "favoriteGifs",
             (favoriteGifs: any) => {
                 if (!favoriteGifs) return;
@@ -104,7 +136,7 @@ function getAddGifFn(): ((gif: any) => void) | null {
                     width: Number(gif.width) || 498,
                     height: Number(gif.height) || 280,
                     format: Number(gif.format) || 2,
-                    order: newOrder,
+                    order: orderToUse,
                 };
             },
             UserSettingsDelay?.INFREQUENT_USER_ACTION ?? 3
@@ -252,6 +284,74 @@ async function verifyGifs(file: File): Promise<void> {
     }
 }
 
+// ─── Settle watch ────────────────────────────────────────────────────────────
+
+async function settleWatch(deduped: GifEntry[], addGif: (gif: any) => Promise<void>): Promise<void> {
+    if (!settings.store.settleWatch) return;
+    const duration = Math.max(0, Math.min(settings.store.settleWatchDuration ?? 15000, 120000));
+    if (duration === 0) return;
+
+    const interval = 1000;
+    let delay = settings.store.delayBetweenImports ?? 800;
+
+    showToast(`Watching favorites for ${Math.round(duration / 1000)}s to catch GIFs Discord removes...`, Toasts.Type.MESSAGE);
+    console.log(`[GifTransfer] Settle watch started: ${duration}ms`);
+
+    let deadline = Date.now() + duration;
+    let rounds = 0;
+    const maxRounds = 5;
+
+    while (Date.now() < deadline) {
+        await sleep(interval);
+        const current = getCurrentGifs();
+        const missing = deduped.filter(gif => current[gif.url] == null);
+        if (missing.length === 0) continue;
+
+        rounds++;
+        if (rounds > maxRounds) {
+            console.log(`[GifTransfer] Settle watch stopped after ${maxRounds} re-add rounds with ${missing.length} still missing.`);
+            break;
+        }
+
+        console.log(`[GifTransfer] Settle watch: ${missing.length} GIFs disappeared, re-adding (round ${rounds}/${maxRounds})...`);
+        showToast(`Discord removed ${missing.length} GIFs, re-adding...`, Toasts.Type.MESSAGE);
+
+        for (const gif of missing) {
+            try {
+                await addGif({
+                    url: gif.url,
+                    src: gif.src ?? gif.url,
+                    width: Number(gif.width) || 498,
+                    height: Number(gif.height) || 280,
+                    format: Number(gif.format) || 2,
+                });
+            } catch (e: any) {
+                const isRateLimit = e?.status === 429 || e?.text?.includes("rate limit") || e?.body?.retry_after;
+                if (isRateLimit && settings.store.autoIncreaseDelay) {
+                    delay = Math.min(delay * 2, 5000);
+                    console.log(`[GifTransfer] Rate limit hit during settle watch! Increased delay to ${delay}ms`);
+                    await sleep(delay * 2);
+                    continue;
+                }
+                console.warn("[GifTransfer] Settle watch failed to re-add GIF:", gif.url, e);
+            }
+            await sleep(delay);
+        }
+
+        deadline = Date.now() + duration;
+    }
+
+    const finalCurrent = getCurrentGifs();
+    const stillMissing = deduped.filter(gif => finalCurrent[gif.url] == null);
+    if (stillMissing.length === 0) {
+        console.log(`[GifTransfer] Settle watch passed. All ${deduped.length} GIFs stable.`);
+        showToast(`All ${deduped.length} GIFs stayed in your favorites.`, Toasts.Type.SUCCESS);
+    } else {
+        console.log(`[GifTransfer] Settle watch: still missing:\n${stillMissing.slice(0, 10).map(g => g.url).join("\n")}${stillMissing.length > 10 ? `\n...and ${stillMissing.length - 10} more` : ""}`);
+        showToast(`${stillMissing.length} GIFs disappeared again. Run Import again to retry.`, Toasts.Type.FAILURE);
+    }
+}
+
 // ─── Import ──────────────────────────────────────────────────────────────────
 
 async function importGifs(file: File): Promise<void> {
@@ -308,7 +408,7 @@ async function importGifs(file: File): Promise<void> {
 
     for (const gif of toImport) {
         try {
-            addGif({
+            await addGif({
                 url: gif.url,
                 src: gif.src ?? gif.url,
                 width: Number(gif.width) || 498,
@@ -338,8 +438,67 @@ async function importGifs(file: File): Promise<void> {
             console.log(`[GifTransfer] Progress: ${ok + err}/${toImport.length} | OK: ${ok} | Errors: ${err} | Delay: ${delay}ms`);
     }
 
-    console.log(`[GifTransfer] ✅ Done! Imported: ${ok} | Errors: ${err} | Skipped: ${skipped}`);
-    showToast(`Import complete! ${ok} GIFs added, ${skipped} duplicates skipped, ${err} errors.`, ok > 0 ? Toasts.Type.SUCCESS : Toasts.Type.FAILURE);
+    if (!settings.store.ensureCompleteImport) {
+        console.log(`[GifTransfer] ✅ Done! Imported: ${ok} | Errors: ${err} | Skipped: ${skipped}`);
+        showToast(`Import complete! ${ok} GIFs added, ${skipped} duplicates skipped, ${err} errors.`, ok > 0 ? Toasts.Type.SUCCESS : Toasts.Type.FAILURE);
+        if (ok > 0) await settleWatch(deduped, addGif);
+        return;
+    }
+
+    const maxPasses = Math.max(0, Math.floor(settings.store.maxRetryPasses ?? 3));
+    const passDelay = Math.max(0, settings.store.retryPassDelay ?? 2000);
+
+    for (let pass = 1; pass <= maxPasses; pass++) {
+        await sleep(passDelay);
+        const current = getCurrentGifs();
+        const missing = deduped.filter(gif => current[gif.url] == null);
+        if (missing.length === 0) {
+            console.log(`[GifTransfer] ✅ Fully imported after ${pass - 1} verification pass(es). Total: ${deduped.length} | Added: ${ok} | Skipped: ${skipped}`);
+            showToast(`All ${deduped.length} GIFs are now in your favorites.`, Toasts.Type.SUCCESS);
+            await settleWatch(deduped, addGif);
+            return;
+        }
+
+        console.log(`[GifTransfer] Pass ${pass}/${maxPasses}: re-adding ${missing.length} missing GIFs...`);
+        showToast(`Verifying import, pass ${pass}: re-adding ${missing.length} missing GIFs...`, Toasts.Type.MESSAGE);
+
+        for (const gif of missing) {
+            try {
+                await addGif({
+                    url: gif.url,
+                    src: gif.src ?? gif.url,
+                    width: Number(gif.width) || 498,
+                    height: Number(gif.height) || 280,
+                    format: Number(gif.format) || 2,
+                });
+                ok++;
+            } catch (e: any) {
+                err++;
+                const isRateLimit = e?.status === 429 || e?.text?.includes("rate limit") || e?.body?.retry_after;
+                if (isRateLimit && settings.store.autoIncreaseDelay) {
+                    rateLimitHits++;
+                    delay = Math.min(delay * 2, 5000);
+                    console.log(`[GifTransfer] Rate limit hit! Increased delay to ${delay}ms`);
+                    await sleep(delay * 2);
+                    continue;
+                }
+                console.warn("[GifTransfer] Failed to re-add GIF:", gif.url, e);
+            }
+            await sleep(delay);
+        }
+    }
+
+    await sleep(passDelay);
+    const finalCurrent = getCurrentGifs();
+    const stillMissing = deduped.filter(gif => finalCurrent[gif.url] == null);
+    console.log(`[GifTransfer] ✅ Done! Imported: ${ok} | Errors: ${err} | Skipped: ${skipped} | Still missing: ${stillMissing.length}`);
+    if (stillMissing.length === 0) {
+        showToast(`All ${deduped.length} GIFs are now in your favorites.`, Toasts.Type.SUCCESS);
+        await settleWatch(deduped, addGif);
+    } else {
+        console.log(`[GifTransfer] Still missing:\n${stillMissing.slice(0, 10).map(g => g.url).join("\n")}${stillMissing.length > 10 ? `\n...and ${stillMissing.length - 10} more` : ""}`);
+        showToast(`Import finished with ${stillMissing.length} GIFs still missing. Run Import again to retry.`, Toasts.Type.FAILURE);
+    }
 }
 
 // ─── File Picker Helper ───────────────────────────────────────────────────────

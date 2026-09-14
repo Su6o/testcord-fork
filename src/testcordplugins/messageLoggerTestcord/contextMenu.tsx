@@ -9,7 +9,7 @@ import { isPluginEnabled } from "@api/PluginManager";
 import { FluxDispatcher, Menu, MessageActions, React, SortedGuildStore, Toasts, UserStore } from "@webpack/common";
 
 import { silentDeleteMessage } from "./antilog";
-import { clearEditHistoryCache, invalidateLoggedCaches, localRemoveLoggedMessage } from "./engine";
+import { clearEditHistoryCache, deleteLog, invalidateLoggedCaches, localRemoveLoggedMessage } from "./engine";
 import { addToOppositeAndList, isInList, type ListType,removeFromList } from "./lists";
 import { openLogs } from "./LogsModal";
 import { osintScanLoggedMessages } from "./osintBridge";
@@ -136,7 +136,7 @@ function buildLoggedMessageItems(props: MenuProps) {
                     (message as any).editHistory = [];
                     FluxDispatcher.dispatch({
                         type: "MESSAGE_UPDATE",
-                        message: { id: message.id, channel_id: message.channel_id }
+                        message: { id: message.id, channel_id: message.channel_id, editHistory: [] }
                     });
                     Toasts.show({
                         message: "Hidden from chat. History stays in your logs.",
@@ -153,12 +153,12 @@ function buildLoggedMessageItems(props: MenuProps) {
                 label="Delete Message History (Forever)"
                 color="danger"
                 action={async () => {
-                    invalidateLoggedCaches(message.id);
-                    await localRemoveLoggedMessage(message.id, true, message.channel_id);
+                    clearEditHistoryCache(message.id);
                     (message as any).editHistory = [];
+                    await deleteLog(message.id);
                     FluxDispatcher.dispatch({
                         type: "MESSAGE_UPDATE",
-                        message: { id: message.id, channel_id: message.channel_id }
+                        message: { id: message.id, channel_id: message.channel_id, editHistory: [] }
                     });
                     Toasts.show({
                         message: "Edit history deleted from your logs forever.",
