@@ -92,6 +92,7 @@ import {
     GamepadIcon,
     getModuleIcon,
     MusicNoteIcon,
+    SectionHeading,
     SettingsGearIcon,
     VsCodeIcon,
 } from "../icons";
@@ -261,11 +262,7 @@ export function UserAreaReorderTab({
                     gap: "8px",
                 }}
             >
-                <div style={{ display: "flex", alignItems: "center", marginBottom: "2px" }}>
-                    <BaseText size="xs" weight="semibold" color="text-muted" style={{ textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                        User Area Preview
-                    </BaseText>
-                </div>
+                <SectionHeading>User Area Preview</SectionHeading>
 
                 <div
                     className="panels__5e434 vc-user-area-preview-panel"
@@ -309,11 +306,7 @@ export function UserAreaReorderTab({
                     gap: "8px",
                 }}
             >
-                <Flex justifyContent="space-between" alignItems="center" style={{ marginBottom: "2px" }}>
-                    <BaseText size="xs" weight="semibold" color="text-muted" style={{ textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                        User Area Reorder & Visibility ({visibleItems.length} items)
-                    </BaseText>
-                </Flex>
+                <SectionHeading>User Area Reorder & Visibility ({visibleItems.length} items)</SectionHeading>
 
                 {visibleItems.map((item, index) => {
                     const isDragging = activeDragIndex === index;
@@ -878,7 +871,7 @@ function ActionButtonsRow({ pluginSettings }: { pluginSettings?: any; }) {
     const isAllTop = userPanelLayout === "all_top";
 
     // Detect actual buttons using the exact same method from the Buttons tab
-    const detected = getBtnItems(id => btnConfigs[id]?.order ?? 0);
+    const detected = getBtnItems(id => btnConfigs[id]?.order ?? 0, false);
 
     const visibleButtons = detected.filter(btn => {
         const cfg = btnConfigs[btn.id] || btnConfigs[btn.label];
@@ -890,6 +883,7 @@ function ActionButtonsRow({ pluginSettings }: { pluginSettings?: any; }) {
         if (btn.label === "Camera" && pluginSettings?.hideCamera) return false;
         if (btn.label === "Screen Share" && pluginSettings?.hideScreenShare) return false;
         if (btn.label === "Activity" && pluginSettings?.hideActivity) return false;
+        if (btn.label === "Soundboard") return false;
 
         // In layouts where native buttons remain in the bottom profile bar, exclude them here to prevent duplicate icons
         if (!isAllTop && isNativeButton(btn.label)) {
@@ -1121,6 +1115,7 @@ function LiveAccountProfilePreview({ pluginSettings }: { pluginSettings?: any; }
                         overflow: "hidden",
                         pointerEvents: "none",
                         zIndex: 0,
+                        background: "linear-gradient(90deg, rgba(115, 11, 200, 0.1) 0%, rgba(115, 11, 200, 0.4) 100%)",
                     }}
                 >
                     {nameplate.video ? (
@@ -1135,7 +1130,7 @@ function LiveAccountProfilePreview({ pluginSettings }: { pluginSettings?: any; }
                             style={{
                                 width: "100%",
                                 height: "100%",
-                                objectFit: "cover",
+                                objectFit: "unset",
                                 objectPosition: "center",
                                 display: "block",
                             }}

@@ -52,6 +52,7 @@ export const TOGGLE_LABELS: Record<string, string[]> = {
     "Activity": ["Start An Activity", "End Activity", "Stop Activity"],
     "Game Activity": ["Enable Game Activity", "Disable Game Activity", "Game Activity"],
     "Spotify Activity": ["Turn on Spotify activity", "Turn off Spotify activity"],
+    "Soundboard": ["Soundboard disabled when deafened", "Open Soundboard"],
 };
 
 export function getCanonicalLabel(label: string): string {
@@ -72,6 +73,28 @@ export function getCanonicalLabel(label: string): string {
         }
     }
     return cleaned;
+}
+
+export function getLabelFromDescribedBy(el: HTMLElement): string | null {
+    const target = el.hasAttribute("aria-describedby") ? el : el.querySelector("[aria-describedby]");
+    const describedBy = target?.getAttribute("aria-describedby");
+    if (!describedBy) return null;
+
+    for (const id of describedBy.split(/\s+/)) {
+        const text = document.getElementById(id)?.textContent?.trim();
+        if (text) return text;
+    }
+    return null;
+}
+
+export function getBtnLabelWithCallButtons(el: HTMLElement): string | null {
+    return (
+        el.getAttribute("aria-label") ||
+        el.querySelector("button")?.getAttribute("aria-label") ||
+        el.querySelector("[aria-label]")?.getAttribute("aria-label") ||
+        getLabelFromDescribedBy(el) ||
+        null
+    );
 }
 
 export function getBtnLabel(el: HTMLElement): string | null {
@@ -100,10 +123,12 @@ export function clearBtnItemsCache() {
     btnItemsCacheKey = "";
 }
 
-export function getBtnItems(orderResolver?: (id: string) => number): BtnItem[] {
+export function getBtnItems(orderResolver?: (id: string) => number, withCallButtons: boolean = false): BtnItem[] {
     const buttons = getAllButtons();
 
-    const key = buttons.map(el => getCanonicalLabel(getBtnLabel(el) ?? "")).join("|");
+    const resolveRawLabel = withCallButtons ? getBtnLabelWithCallButtons : getBtnLabel;
+
+    const key = buttons.map(el => getCanonicalLabel(resolveRawLabel(el) ?? "")).join("|");
     if (btnItemsCache && key === btnItemsCacheKey) {
         if (orderResolver) {
             return [...btnItemsCache].sort((a, b) => (orderResolver(a.id) ?? 0) - (orderResolver(b.id) ?? 0));
@@ -114,7 +139,7 @@ export function getBtnItems(orderResolver?: (id: string) => number): BtnItem[] {
     const seen = new Set<string>();
     const out: BtnItem[] = [];
     for (const el of buttons) {
-        const rawLabel = getBtnLabel(el);
+        const rawLabel = resolveRawLabel(el);
         if (!rawLabel) continue;
         const label = getCanonicalLabel(rawLabel);
         if (seen.has(label)) continue;
