@@ -13,6 +13,7 @@ import { Card } from "@components/Card";
 import { Flex } from "@components/Flex";
 import { FormSwitch } from "@components/FormSwitch";
 import { Heading } from "@components/Heading";
+import { ScreenshareIcon, VideoIcon } from "@components/Icons";
 import { Paragraph } from "@components/Paragraph";
 import { getTestcordIconColor, ICON_COLOR_FALLBACK } from "@testcordplugins/TestcordHelper/iconColors";
 import { TestcordDevs } from "@utils/constants";
@@ -29,6 +30,7 @@ import {
     getBtnItems as getDetectedBtnItems,
     getBtnLabelWithCallButtons,
     getCanonicalLabel,
+    getDiscordIcon,
     getPanelLayoutPlainSettings,
     getUserAreaOrder,
     getVisibleGameOrRpc,
@@ -47,9 +49,9 @@ import {
     S,
     saveRenderer,
     SelfPresenceStore,
+    SoundboardIconFallback,
     stopModuleManager,
     subscribeModules,
-    svgs,
 } from "./modules";
 
 migratePluginSettings("deraculpanellayout", "PanelLayout");
@@ -145,6 +147,12 @@ export const settings = definePluginSettings({
 const NATIVE_BUTTON_LABELS = new Set([
     "Mute", "Deafen", "User Settings", "Input Options", "Output Options",
 ]);
+
+const DeafenOffIcon = getDiscordIcon(["HeadphonesIcon"]);
+const DeafenIcon = getDiscordIcon(["HeadphonesSlashIcon"]);
+const MuteOffIcon = getDiscordIcon(["MicrophoneIcon"]);
+const MuteIcon = getDiscordIcon(["MicrophoneSlashIcon"]);
+const SettingsIcon = getDiscordIcon(["SettingsIcon"]);
 
 interface ButtonConfig {
     label: string;
@@ -458,8 +466,8 @@ function buildCSS(): string {
     const lines: string[] = [];
 
     const defaultBtn = `, ${S.callControls} ${S.callButton}[data-deracul-label="`;
-    const baseBtnHover =`${S.panelButtons} ${S.panelButton}:hover, ${S.previewButtonContainer} ${S.previewButton}:hover${callButtonStylingCamera === true ? `${defaultBtn}Camera"]:hover` : ""}${callButtonStylingScreenShare === true ? `${defaultBtn}Screen Share"]:hover` : ""}${callButtonStylingActivity === true ? `${defaultBtn}Activity"]:hover` : ""}${callButtonStylingSoundboard === true ? `, ${S.callControls} [data-deracul-label="Soundboard"] ${S.callButton}:hover` : ""}`;
-    const baseBtn = `${S.panelButtons} ${S.panelButton}, ${S.previewButtonContainer} ${S.previewButton}${callButtonStylingCamera === true ? `${defaultBtn}Camera"]` : ""}${callButtonStylingScreenShare === true ? `${defaultBtn}Screen Share"]` : ""}${callButtonStylingActivity === true ? `${defaultBtn}Activity"]` : ""}${callButtonStylingSoundboard === true ? `, ${S.callControls} [data-deracul-label="Soundboard"] ${S.callButton}` : ""}`;
+    const baseBtnHover =`${S.panelButtons} ${S.panelButton}:hover, ${S.previewButtonContainer} ${S.previewButton}:hover${callButtonStylingCamera === true ? `${defaultBtn}Camera"]:hover` : ""}${callButtonStylingScreenShare === true ? `${defaultBtn}Screen Share"]:hover` : ""}${callButtonStylingActivity === true ? `${defaultBtn}Activity"]:hover` : ""}${callButtonStylingSoundboard === true ? `, ${S.callControls} [data-deracul-label="Soundboard"] ${S.callButton}[type="button"]:hover` : ""}`;
+    const baseBtn = `${S.panelButtons} ${S.panelButton}, ${S.previewButtonContainer} ${S.previewButton}${callButtonStylingCamera === true ? `${defaultBtn}Camera"]` : ""}${callButtonStylingScreenShare === true ? `${defaultBtn}Screen Share"]` : ""}${callButtonStylingActivity === true ? `${defaultBtn}Activity"]` : ""}${callButtonStylingSoundboard === true ? `, ${S.callControls} [data-deracul-label="Soundboard"] ${S.callButton}[type="button"]` : ""}`;
 
     lines.push(`
         .SubModalButton {
@@ -683,6 +691,22 @@ function buildCSS(): string {
         .icon-color-fix svg [stroke]:not([stroke=none],[stroke=currentColor],.blackLine) {
             stroke: var(--vc-plugin-icon-color, var(--interactive-normal, var(--header-secondary))) !important;
         }
+
+        .panel__5dec7 {
+            border-radius: 0;
+        }
+
+        .background-color-green {
+            background-color: var(--opacity-green-12) !important;
+        }
+
+        .background-color-green:hover {
+            background-color: var(--opacity-green-24) !important;
+        }
+
+        .icon-color-green * {
+            fill: var(--green-new-30) !important;
+        }
     `);
 
     switch (st.userPanelLayout) {
@@ -830,7 +854,7 @@ function buildCSS(): string {
     }
 
     if ((st.buttonStyle === "outlineold" || st.buttonStyle === "outlined") && st.hoverEffect === "glow") {
-        lines.push(`${S.panelButtons} ${S.panelButton}.plated__67645:not(.plateMuted__67645)${callButtonStylingCamera === true ? `${defaultBtn}Camera"]:not([aria-pressed="true"])` : ""}${callButtonStylingScreenShare === true ? `${defaultBtn}Screen Share"]:not([aria-pressed="true"])` : ""}${callButtonStylingActivity === true ? `${defaultBtn}Activity"]:not([aria-pressed="true"])` : ""}${callButtonStylingSoundboard === true ? `, ${S.callControls} [data-deracul-label="Soundboard"] ${S.callButton}:not([aria-pressed="true"])` : ""} { background: transparent !important }`);
+        lines.push(`${S.panelButtons} ${S.panelButton}.plated__67645:not(.plateMuted__67645)${callButtonStylingCamera === true ? `${defaultBtn}Camera"]:not([aria-pressed="true"])` : ""}${callButtonStylingScreenShare === true ? `${defaultBtn}Screen Share"]:not([aria-pressed="true"])` : ""}${callButtonStylingActivity === true ? `${defaultBtn}Activity"]:not([aria-pressed="true"])` : ""}${callButtonStylingSoundboard === true ? `, ${S.callControls} [data-deracul-label="Soundboard"] ${S.callButton}[type="button"]:not([aria-pressed="true"])` : ""} { background: transparent !important }`);
     }
 
     if (st.hideChevrons) lines.push(`${S.panelButtons} ${S.chevron} { display: none !important; }`);
@@ -838,8 +862,8 @@ function buildCSS(): string {
     if (st.hideVoiceStatus) lines.push(`${S.voiceStatus} { display: none !important; }`);
     if (st.hidePingIcon) lines.push(`${S.pingIcon} { display: none !important; }`);
     if (st.callCompact) {
-        lines.push(`${S.callControls} ${S.callButton} { min-width: unset !important; padding: 4px 8px !important; flex: unset !important; }`);
-        lines.push(`${S.callControls} ${S.callButton} .lottieIcon__5eb9b, ${S.callControls} ${S.callButton} svg { width: 18px !important; height: 18px !important; }`);
+        lines.push(`${S.callControls} ${S.callButton}[type="button"] { min-width: unset !important; padding: 4px 8px !important; flex: unset !important; }`);
+        lines.push(`${S.callControls} ${S.callButton}[type="button"] .lottieIcon__5eb9b, ${S.callControls} ${S.callButton} svg { width: 18px !important; height: 18px !important; }`);
     }
     if (st.hideMute) lines.push(`${getBtnSelector("Mute")} { display: none !important; }`);
     if (st.hideDeafen) lines.push(`${getBtnSelector("Deafen")} { display: none !important; }`);
@@ -966,12 +990,14 @@ function buildCustomCSS(): string {
             const label = getCanonicalLabel(cfg.label);
 
             lines.push(`
-                ${S.panelContainer} ${S.panelButton}[data-deracul-label="${label}"]:not([aria-checked="false"]):hover,
-                ${S.panelContainer} ${S.panelButton}[data-deracul-label="${label}"]:not([aria-checked="false"]),
-                ${S.callControls} [data-deracul-label="${label}"] ${S.callButton}:not([aria-pressed="false"]):hover,
-                ${S.callControls} [data-deracul-label="${label}"] ${S.callButton}:not([aria-pressed="false"]),
+                ${S.callControls} [data-deracul-label="${label}"] ${S.callButton}[type="button"]:not([aria-pressed="false"]):hover,
+                ${S.callControls} [data-deracul-label="${label}"] ${S.callButton}[type="button"]:not([aria-pressed="false"]),
+                ${S.panelButtons} ${S.panelButton}[data-deracul-label="${label}"]:not([aria-checked="false"]):hover,
+                ${S.panelButtons} ${S.panelButton}[data-deracul-label="${label}"]:not([aria-checked="false"]),
                 ${S.callControls} ${S.callButton}[data-deracul-label="${label}"]:not([aria-pressed="false"]):hover,
                 ${S.callControls} ${S.callButton}[data-deracul-label="${label}"]:not([aria-pressed="false"]),
+                ${S.panelButtons} ${S.panelButton}[aria-label="${label}"]:not([aria-checked="false"]):hover,
+                ${S.panelButtons} ${S.panelButton}[aria-label="${label}"]:not([aria-checked="false"]),
                 ${S.previewButtonOn}[data-deracul-label="${label}"]:hover,
                 ${S.previewButtonOn}[data-deracul-label="${label}"] {
                     background-color: ${finalColor} !important;
@@ -995,12 +1021,14 @@ function buildCustomCSS(): string {
             const label = getCanonicalLabel(cfg.label);
 
             lines.push(`
-                ${S.panelContainer} ${S.panelButton}[data-deracul-label="${label}"][aria-checked="false"]:hover,
-                ${S.panelContainer} ${S.panelButton}[data-deracul-label="${label}"][aria-checked="false"],
-                ${S.callControls} [data-deracul-label="${label}"] ${S.callButton}[aria-pressed="false"]:hover,
-                ${S.callControls} [data-deracul-label="${label}"] ${S.callButton}[aria-pressed="false"],
+                ${S.callControls} [data-deracul-label="${label}"] ${S.callButton}[aria-pressed="false"][type="button"]:hover,
+                ${S.callControls} [data-deracul-label="${label}"] ${S.callButton}[aria-pressed="false"][type="button"],
+                ${S.panelButtons} ${S.panelButton}[data-deracul-label="${label}"][aria-checked="false"]:hover,
+                ${S.panelButtons} ${S.panelButton}[data-deracul-label="${label}"][aria-checked="false"],
                 ${S.callControls} ${S.callButton}[data-deracul-label="${label}"][aria-pressed="false"]:hover,
                 ${S.callControls} ${S.callButton}[data-deracul-label="${label}"][aria-pressed="false"],
+                ${S.panelButtons} ${S.panelButton}[aria-label="${label}"][aria-checked="false"]:hover,
+                ${S.panelButtons} ${S.panelButton}[aria-label="${label}"][aria-checked="false"],
                 ${S.previewButtonOff}[data-deracul-label="${label}"] {
                     --custom-nameplate-neutral-hovered: ${finalColorHovered} !important;
                     --custom-nameplate-neutral: ${finalColor} !important;
@@ -1589,23 +1617,25 @@ function ButtonsDragTab() {
                                             {isMute && (
                                                 <div
                                                     className="deracul-btn-preview"
-                                                    dangerouslySetInnerHTML={{ __html: svgs.muteOff }}
                                                     style={{
                                                         width: "36px", height: "36px", borderRadius: "8px", backgroundColor: "var(--background-tertiary, var(--background-surface-highest))",
                                                         display: "flex", alignItems: "center", justifyContent: "center", color: item.id === "Game Activity" ? "var(--status-danger)" : "var(--text-default)",
                                                         boxShadow: "0 2px 4px rgba(0,0,0,0.15)", pointerEvents: "none"
-                                                    }} />
+                                                }}>
+                                                    <MuteOffIcon width={20} height={20} size="sm" />
+                                                </div>
                                             )}
 
                                             {isDeafen && (
                                                 <div
                                                     className="deracul-btn-preview"
-                                                    dangerouslySetInnerHTML={{ __html: svgs.deafenOff }}
                                                     style={{
                                                         width: "36px", height: "36px", borderRadius: "8px", backgroundColor: "var(--background-tertiary, var(--background-surface-highest))",
                                                         display: "flex", alignItems: "center", justifyContent: "center", color: item.id === "Game Activity" ? "var(--status-danger)" : "var(--text-default)",
                                                         boxShadow: "0 2px 4px rgba(0,0,0,0.15)", pointerEvents: "none"
-                                                    }} />
+                                                }}>
+                                                    <DeafenOffIcon width={20} height={20} size="sm" />
+                                                </div>
                                             )}
 
                                             {!isMute && !isDeafen && (
@@ -1660,7 +1690,7 @@ function ButtonsDragTab() {
                                     onMouseEnter={e => e.currentTarget.style.color = "var(--interactive-active)"}
                                     onMouseLeave={e => e.currentTarget.style.color = "var(--interactive-normal)"}
                                 >
-                                    <span dangerouslySetInnerHTML={{ __html: svgs.settings }} className="icon-color-fix" style={{ display: "flex", alignItems: "center", justifyContent: "center" }} />
+                                    <SettingsIcon width={20} height={20} size="sm" />
                                 </button>
                             </div>
                         </div>
@@ -1690,11 +1720,11 @@ function ButtonsDragTab() {
                                     }}>
                                         <BaseText size="sm" color="text-muted" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                                             {isMute && (
-                                                <span dangerouslySetInnerHTML={{ __html: svgs.muteOff }} className="icon-color-fix" style={{ display: "flex", alignItems: "center", justifyContent: "center" }} />
+                                                <MuteOffIcon width={20} height={20} size="sm" />
                                             )}
 
                                             {isDeafen && (
-                                                <span dangerouslySetInnerHTML={{ __html: svgs.deafenOff }} className="icon-color-fix" style={{ display: "flex", alignItems: "center", justifyContent: "center" }} />
+                                                <DeafenOffIcon width={20} height={20} size="sm" />
                                             )}
 
                                             {!isMute && !isDeafen && (
@@ -2112,11 +2142,11 @@ function CustomizationRowButton({
                 }}
             >
                 {isMute && (
-                    <span dangerouslySetInnerHTML={{ __html: svgs.muteOff }} className="icon-color-fix" style={{ display: "flex", alignItems: "center", justifyContent: "center" }} />
+                    <MuteOffIcon width={20} height={20} size="sm" />
                 )}
 
                 {isDeafen && (
-                    <span dangerouslySetInnerHTML={{ __html: svgs.deafenOff }} className="icon-color-fix" style={{ display: "flex", alignItems: "center", justifyContent: "center" }} />
+                    <DeafenOffIcon width={20} height={20} size="sm" />
                 )}
 
                 {!isMute && !isDeafen && (
@@ -2130,11 +2160,7 @@ function CustomizationRowButton({
                     borderRadius: previewRadius,
                 }}
             >
-                <span
-                    dangerouslySetInnerHTML={{ __html: svgs.settings }}
-                    className="vc-pl-custom-btn-settings-icon"
-                    style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
-                />
+                <SettingsIcon width={20} height={20} size="sm" />
             </div>
         </div>
     );
@@ -2319,8 +2345,17 @@ function SettingModalItem({
     const isScreenShare = canonical === "Screen Share";
     const isMute = canonical === "Mute";
     const isDeafen = canonical === "Deafen";
+    const ScreenOffIcon = getDiscordIcon(["ScreenArrowIcon", "ScreenshareIcon", "ScreenIcon"], ScreenshareIcon);
+    const ScreenIcon = getDiscordIcon(["ScreenXIcon", "ScreenshareIconx", "ScreenIconx"], ScreenshareIcon);
+    const SoundboardIcon = getDiscordIcon(["SoundboardIcon"], SoundboardIconFallback);
+    const CameraOffIcon = getDiscordIcon(["VideoSlashIcon", "CameraSlashIcon"], VideoIcon);
+    const CameraIcon = getDiscordIcon(["VideoIcon", "CameraIcon"], VideoIcon);
+    const defaultPreviewOnClasses = "buttonPreview previewButtonOn button__201d5 lookBlank__201d5";
 
-    const [targetSize, setTargetSize] = React.useState({ width: "36px", height: "36px" });
+    const [targetSize, setTargetSize] = React.useState(() => {
+        const size = `${settings.store.buttonContainerSize ?? 36}px`;
+        return { width: size, height: size };
+    });
     const [{ customNameplateNeutral, customNameplateNeutralHovered }, setNameplateVars] = React.useState<{
         customNameplateNeutral: string | null;
         customNameplateNeutralHovered: string | null;
@@ -2541,16 +2576,23 @@ function SettingModalItem({
                                         display: "flex",
                                         alignItems: "center",
                                         justifyContent: "center",
-                                        userSelect: "none"
+                                        userSelect: "none",
+                                        transition: "none"
                                     } as React.CSSProperties}
                                 >
+                                    {isScreenShare && (
+                                        <ScreenOffIcon width={20} height={20} size="sm" />
+                                    )}
+                                    {isCamera && (
+                                        <CameraOffIcon width={20} height={20} size="sm" />
+                                    )}
                                     {isMute && (
-                                        <span dangerouslySetInnerHTML={{ __html: svgs.muteOff }} className="icon-color-fix" style={{ display: "flex", alignItems: "center", justifyContent: "center" }} />
+                                        <MuteOffIcon width={20} height={20} size="sm" />
                                     )}
                                     {isDeafen && (
-                                        <span dangerouslySetInnerHTML={{ __html: svgs.deafenOff }} className="icon-color-fix" style={{ display: "flex", alignItems: "center", justifyContent: "center" }} />
+                                        <DeafenOffIcon width={20} height={20} size="sm" />
                                     )}
-                                    {!isMute && !isDeafen && (
+                                    {!isMute && !isDeafen && !isCamera && !isScreenShare && (
                                         <SvgPreview icon={icon} enabled={false} />
                                     )}
                                 </button>
@@ -2562,28 +2604,35 @@ function SettingModalItem({
                                 <BaseText size="xs" color="text-muted">ON State</BaseText>
                             )}
                             <button
-                                className={isMute || isDeafen ? "buttonPreview previewButtonOn button__201d5 lookBlank__201d5 plateMuted__67645" : "buttonPreview previewButtonOn button__201d5 lookBlank__201d5"}
+                                className={(isMute || isDeafen) ? `${defaultPreviewOnClasses} plateMuted__67645` : (isScreenShare || isCamera) ? `${defaultPreviewOnClasses} background-color-green` : defaultPreviewOnClasses}
                                 data-deracul-label={cfg.label}
                                 style={{
                                     "--custom-nameplate-neutral-hovered": customNameplateNeutralHovered,
                                     "--custom-nameplate-neutral": customNameplateNeutral,
                                     width: targetSize.width,
                                     height: targetSize.height,
-                                    background: (isCamera || isScreenShare) ? "var(--opacity-green-12)" : "transparent",
+                                    background: "transparent",
                                     color: "var(--vc-plugin-icon-color, var(--interactive-normal, var(--header-secondary)))",
                                     display: "flex",
                                     alignItems: "center",
                                     justifyContent: "center",
-                                    userSelect: "none"
+                                    userSelect: "none",
+                                    transition: "none"
                                 } as React.CSSProperties}
                             >
+                                {isScreenShare && (
+                                    <ScreenIcon width={20} height={20} size="sm" className={cfg.colorfulActiveButton ? "" : "icon-color-green"} />
+                                )}
+                                {isCamera && (
+                                    <CameraIcon width={20} height={20} size="sm" className={cfg.colorfulActiveButton ? "" : "icon-color-green"} />
+                                )}
                                 {isMute && (
-                                    <span dangerouslySetInnerHTML={{ __html: svgs.muteOn }} className="icon-color-fix" style={{ display: "flex", alignItems: "center", justifyContent: "center" } as React.CSSProperties} />
+                                    <MuteIcon width={20} height={20} size="sm" />
                                 )}
                                 {isDeafen && (
-                                    <span dangerouslySetInnerHTML={{ __html: svgs.deafenOn }} className="icon-color-fix" style={{ display: "flex", alignItems: "center", justifyContent: "center" } as React.CSSProperties} />
+                                    <DeafenIcon width={20} height={20} size="sm" />
                                 )}
-                                {!isMute && !isDeafen && (
+                                {!isMute && !isDeafen && !isCamera && !isScreenShare && (
                                     <SvgPreview icon={icon} enabled={true} />
                                 )}
                             </button>

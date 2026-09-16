@@ -38,7 +38,7 @@ function PhoneHangUpIconFallback({ width = 16, height = 16, ...props }: any) {
     );
 }
 
-function SoundboardIconFallback({ width = 16, height = 16, ...props }: any) {
+export function SoundboardIconFallback({ width = 16, height = 16, ...props }: any) {
     return (
         <svg width={width} height={height} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" {...props}>
             <path d="M12 3v18M8 7v10M4 10v4M16 7v10M20 10v4" />
@@ -46,7 +46,7 @@ function SoundboardIconFallback({ width = 16, height = 16, ...props }: any) {
     );
 }
 
-function getDiscordIcon(names: string[], FallbackComponent?: React.ComponentType<any>): React.ComponentType<any> {
+export function getDiscordIcon(names: string[], FallbackComponent?: React.ComponentType<any>): React.ComponentType<any> {
     return (props: any) => {
         // 1. Try Discord's concatenated icons module (where all Discord icons reside)
         if (iconsModule) {
@@ -83,9 +83,11 @@ const ScreenArrowIcon = getDiscordIcon(["ScreenArrowIcon", "ScreenshareIcon", "S
 const AppsIcon = getDiscordIcon(["AppsIcon", "ActivitiesIcon"], FallbackAppsIcon);
 const SoundboardIcon = getDiscordIcon(["SoundboardIcon"], SoundboardIconFallback);
 const PhoneHangUpIcon = getDiscordIcon(["PhoneHangUpIcon", "PhoneIcon", "DisconnectIcon"], PhoneHangUpIconFallback);
+const DeafenIcon = getDiscordIcon(["Deafen"], PhoneHangUpIconFallback);
+const MuteIcon = getDiscordIcon(["Mute"], PhoneHangUpIconFallback);
 
 import { ActivityIcon, ActivityInfo, PresenceStore } from "../activityBanner";
-import { getBtnItems, svgs } from "../buttonDetection";
+import { getBtnItems } from "../buttonDetection";
 import {
     ChevronDownIcon,
     CodeIcon,
@@ -938,9 +940,9 @@ function ActionButtonsRow({ pluginSettings }: { pluginSettings?: any; }) {
                         }}
                     >
                         {isMute ? (
-                            <span dangerouslySetInnerHTML={{ __html: svgs.muteOff }} style={{ display: "flex", alignItems: "center", justifyContent: "center" }} />
+                            <MuteIcon width={16} height={16} size="xs" />
                         ) : isDeafen ? (
-                            <span dangerouslySetInnerHTML={{ __html: svgs.deafenOff }} style={{ display: "flex", alignItems: "center", justifyContent: "center" }} />
+                            <DeafenIcon width={16} height={16} size="xs" />
                         ) : (
                             <span
                                 className="panellayout-btn-preview"
