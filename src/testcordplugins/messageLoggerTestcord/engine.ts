@@ -98,6 +98,27 @@ export function getCachedLoggedMessage(id: string) {
     return recentMessages.get(id) ?? channelMessageCache.get(id);
 }
 
+/**
+ * Cache history-loaded messages (channel fetch) so a later delete has a
+ * source snapshot even when the message was never seen via MESSAGE_CREATE
+ * this session (e.g. an older DM photo loaded by scrolling).
+ */
+export function rememberLiveMessages(messages: LoggedMessage[]) {
+    for (const m of messages) {
+        if (!m?.id) continue;
+        try {
+            if ((((m as any).flags ?? 0) & EPHEMERAL) === EPHEMERAL) continue;
+            let snapshot: LoggedMessage;
+            try {
+                snapshot = snapshotMessage(m as any);
+            } catch {
+                snapshot = m;
+            }
+            remember(snapshot);
+        } catch { }
+    }
+}
+
 export function cacheChannelMessages(records: LogRecord[]) {
     for (const rec of records) {
         if (rec.hidden) continue;
@@ -292,7 +313,12 @@ export function preserveRemovedMedia(payload: MessageUpdatePayload) {
                         if (old.thumbnail?.url && !match.thumbnail?.url) { match.thumbnail = lodash.cloneDeep(old.thumbnail); hasMergedMiddle = true; }
                     }
                     const seen = new Set(incomingEmbeds.map(stableFp));
-                    removed = oldEmbeds.filter((e: any) => !seen.has(stableFp(e)));
+                    // Pure removal (e.g. stripped preview) restores the missing embeds. A fresh
+                    // embed set (e.g. a bot advancing to the next step) is a legitimate replacement:
+                    // resurrecting the old ones here piles stale embeds onto every edit.
+                    const oldSeen = new Set(oldEmbeds.map(stableFp));
+                    const hasNewEmbeds = incomingEmbeds.some((e: any) => !oldSeen.has(stableFp(e)));
+                    removed = hasNewEmbeds ? [] : oldEmbeds.filter((e: any) => !seen.has(stableFp(e)));
                     baseEmbeds = incomingEmbeds;
                     if (hasMergedMiddle && removed.length === 0) {
                         const target = ensureClone();
@@ -322,8 +348,12 @@ export function preserveRemovedMedia(payload: MessageUpdatePayload) {
             const incomingAttachments = newMsg.attachments;
 
             if (incomingAttachments !== undefined && oldAttachments.length > incomingAttachments.length) {
+                const oldIds = new Set(oldAttachments.map((a: any) => a?.id));
                 const seenIds = new Set(incomingAttachments.map((a: any) => a?.id));
-                const removed = oldAttachments.filter((a: any) => !seenIds.has(a?.id));
+                // Same replacement rule as embeds: fresh attachments mean the old ones were
+                // swapped out, not stripped — don't pile them back on.
+                const isReplacement = incomingAttachments.some((a: any) => !oldIds.has(a?.id));
+                const removed = isReplacement ? [] : oldAttachments.filter((a: any) => !seenIds.has(a?.id));
 
                 if (removed.length > 0) {
                     const target = ensureClone();
@@ -490,6 +520,7 @@ function isCacheGated(payload: MessageCreatePayload) {
         if (isDm) return false;
         if (payload.guildId == null && ch == null) {
             // Unknown channel but likely DM; let shouldIgnore decide, don't gate it here.
+            return false;
         }
     }
     if (ch) {

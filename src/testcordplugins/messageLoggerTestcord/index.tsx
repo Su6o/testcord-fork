@@ -34,6 +34,7 @@ import {
     mergedEditTimestamps as mergedEditTimestampsRef,
     mergedMessageCache as mergedMessageCacheRef,
     preserveRemovedMedia,
+    rememberLiveMessages,
     runMaintenanceNow,
     shouldIgnore,
     startEngine,
@@ -66,6 +67,10 @@ function OpenLogsButton() {
 
 async function processMessageFetch(response: FetchMessagesResponse) {
     if (!response.ok || !Array.isArray(response.body)) return;
+
+    // Cache live history so later deletes resolve even for messages never
+    // seen via MESSAGE_CREATE this session (e.g. older DM photos).
+    try { rememberLiveMessages(response.body); } catch { }
 
     try {
         if (response.body.length === 0) {
@@ -212,7 +217,11 @@ async function processMessageFetch(response: FetchMessagesResponse) {
 }
 
 function mergeLoadedMessages(messages: LoggedMessage[] & { extra?: LoggedMessage[]; }, payload: LoadMessagesPayload) {
-    if (!messages.extra?.length) return messages;
+    if (!messages.extra?.length) {
+        // Still cache live messages for delete resolution on plain fetches.
+        try { rememberLiveMessages(messages); } catch { }
+        return messages;
+    }
     if (messages.length === 0) {
         // Empty channel (e.g. #pending after all accepted) — show all deleted logs for it
         const sorted = [...messages.extra].sort((a, b) => Date.parse(String(b.timestamp)) - Date.parse(String(a.timestamp)));
@@ -239,6 +248,7 @@ function mergeLoadedMessages(messages: LoggedMessage[] & { extra?: LoggedMessage
 
     messages.push(...extra);
     messages.sort((left, right) => toMs(String(right.timestamp)) - toMs(String(left.timestamp)));
+    try { rememberLiveMessages(messages); } catch { }
     return messages;
 }
 
@@ -354,6 +364,22 @@ function handleChannelSelect(payload: { channelId?: string; }) {
         } catch { }
     }
 
+    // Snapshot whatever is already rendered so deletes resolve even before
+    // the next fetch populates the cache (e.g. just-opened DM history).
+    try {
+        const liveCollection = (MessageStore as any).getMessages?.(channelId) as any;
+        if (Array.isArray(liveCollection)) {
+            if (liveCollection.length) rememberLiveMessages(liveCollection as any);
+        } else if (typeof liveCollection?.toArray === "function") {
+            const arr = liveCollection.toArray();
+            if (arr?.length) rememberLiveMessages(arr as any);
+        } else if (typeof liveCollection?.forEach === "function") {
+            const arr: LoggedMessage[] = [];
+            liveCollection.forEach((m: any) => { if (m) arr.push(m); });
+            if (arr.length) rememberLiveMessages(arr);
+        }
+    } catch { }
+
     // Only refetch if we have fetched this channel before and have logged messages for it.
     const collection = (MessageStore as any).getMessages?.(channelId);
     if (!collection?.hasFetched) return;
@@ -370,6 +396,100 @@ function handleChannelSelect(payload: { channelId?: string; }) {
             (MessageActions as any).fetchMessages?.({ channelId, limit: 50 });
         } catch { }
     }).catch(() => { });
+}
+
+/**
+ * Fallback live-keep: if the MessageStore patch missed a delete (stale match,
+ * cache lookup failure), put the marked-deleted copy back instantly so the
+ * message stays visible instead of only reappearing after a restart.
+ */
+function reInjectDeletedLive(channelId: string, snapshot: LoggedMessage) {
+    try {
+        const Internal: any = (MessageStoreInternal as any);
+        const cache = Internal.get?.(channelId);
+        if (!cache || cache.has?.(snapshot.id)) return;
+        const marked: LoggedMessage = {
+            ...snapshot,
+            deleted: true,
+            deletedTimestamp: (snapshot as any).deletedTimestamp ?? new Date().toISOString(),
+            attachments: snapshot.attachments?.map(a => ({ ...a, deleted: true })) ?? []
+        };
+        try { renderApi?.invalidateMessageClassCache(snapshot.id); } catch { }
+        try { mergedMessageCache.delete(snapshot.id); mergedEditTimestamps.delete(snapshot.id); } catch { }
+        const msgClass = (renderApi as any)?.messageJsonToMessageClass?.({ message: marked });
+        if (!msgClass || typeof cache.set !== "function") return;
+        const newCache = cache.set(snapshot.id, msgClass);
+        if (newCache !== cache) {
+            try { Internal.commit?.(newCache); } catch { }
+        }
+    } catch { }
+}
+
+function snapshotForDelete(channelId: string | undefined, messageId: string | undefined): LoggedMessage | undefined {
+    if (!messageId) return undefined;
+    try {
+        let snap = getCachedLoggedMessage(messageId);
+        if (!snap && channelId) {
+            const live: any = MessageStore.getMessage(channelId, messageId);
+            if (live) {
+                try { rememberLiveMessages([live]); } catch { }
+                snap = getCachedLoggedMessage(messageId) ?? live;
+            }
+        }
+        return snap;
+    } catch {
+        return undefined;
+    }
+}
+
+function onFluxMessageDelete(payload: MessageDeletePayload) {
+    if ((payload as any)?.mlDeleted) {
+        handleMessageDelete(payload);
+        return;
+    }
+    const channelId = (payload as any)?.channelId ?? (payload as any)?.channel_id;
+    const messageId = (payload as any)?.id ?? (payload as any)?.messageId;
+    const snap = snapshotForDelete(channelId, messageId);
+    handleMessageDelete(payload);
+    if (snap && channelId && messageId) {
+        // Microtask runs before paint: no visible flicker when the patch missed.
+        queueMicrotask(() => {
+            try {
+                const Internal: any = (MessageStoreInternal as any);
+                if (Internal.get?.(channelId)?.has?.(messageId)) return;
+                reInjectDeletedLive(channelId, snap);
+            } catch { }
+        });
+    }
+}
+
+function onFluxMessageDeleteBulk(payload: MessageDeleteBulkPayload) {
+    if ((payload as any)?.mlDeleted) {
+        handleMessageDeleteBulk(payload);
+        return;
+    }
+    const channelId = (payload as any)?.channelId ?? (payload as any)?.channel_id;
+    const ids: string[] = (payload as any)?.ids ?? [];
+    const snaps = new Map<string, LoggedMessage>();
+    for (const id of ids) {
+        const snap = snapshotForDelete(channelId, id);
+        if (snap) snaps.set(id, snap);
+    }
+    handleMessageDeleteBulk(payload);
+    if (snaps.size && channelId) {
+        queueMicrotask(() => {
+            try {
+                const Internal: any = (MessageStoreInternal as any);
+                const cache = Internal.get?.(channelId);
+                for (const [id, snap] of snaps) {
+                    try {
+                        if (cache?.has?.(id)) continue;
+                        reInjectDeletedLive(channelId, snap);
+                    } catch { }
+                }
+            } catch { }
+        });
+    }
 }
 
 export default definePlugin({
@@ -588,8 +708,8 @@ export default definePlugin({
     flux: {
         MESSAGE_CREATE: handleMessageCreate as (payload: MessageCreatePayload) => void,
         MESSAGE_UPDATE: handleMessageUpdate as (payload: MessageUpdatePayload) => void,
-        MESSAGE_DELETE: handleMessageDelete as (payload: MessageDeletePayload) => void,
-        MESSAGE_DELETE_BULK: handleMessageDeleteBulk as (payload: MessageDeleteBulkPayload) => void,
+        MESSAGE_DELETE: onFluxMessageDelete as (payload: MessageDeletePayload) => void,
+        MESSAGE_DELETE_BULK: onFluxMessageDeleteBulk as (payload: MessageDeleteBulkPayload) => void,
         CHANNEL_SELECT: handleChannelSelect as (payload: { channelId?: string; }) => void,
     },
 
@@ -668,8 +788,12 @@ export default definePlugin({
             const channelId = data.channelId ?? data.channel_id;
             const cache = Internal.get?.(channelId) ?? Internal.getOrCreate?.(channelId);
             if (!cache) return false;
-            const ids: string[] = isBulk ? (data.ids ?? []) : [data.id];
-            if (!isBulk && !cache.has?.(data.id)) return false;
+            const singleId = data.id ?? data.messageId;
+            const ids: string[] = isBulk ? (data.ids ?? []) : [singleId];
+            if (!isBulk) {
+                const present = typeof cache.has === "function" ? cache.has(singleId) : !!cache.get?.(singleId);
+                if (!present) return false;
+            }
 
             const EPHEMERAL = 64;
             // Keep all non-ephemeral, non-mlDeleted messages live (red) regardless of ignore settings.
@@ -805,7 +929,12 @@ export default definePlugin({
                         const latestAtts: any[] = latestMessage.attachments ?? [];
                         if (!latestMessage.attachments || latestAtts.length < loggedMessage.attachments.length) {
                             const seen = new Set(latestAtts.map((a: any) => a?.id));
-                            const missing = (loggedMessage.attachments as any[]).filter((a: any) => !seen.has(a?.id));
+                            const loggedIds = new Set((loggedMessage.attachments as any[]).map((a: any) => a?.id));
+                            // Replacement, not removal: a fresh attachment set means the old ones were
+                            // swapped out — don't pile them back on.
+                            const missing = latestAtts.some((a: any) => !loggedIds.has(a?.id))
+                                ? []
+                                : (loggedMessage.attachments as any[]).filter((a: any) => !seen.has(a?.id));
                             if (missing.length) {
                                 void restoreAttachmentBlobs(missing as any).catch(() => { });
                                 merged.attachments = latestAtts.length ? [...latestAtts, ...missing] : [...(loggedMessage.attachments as any[])];
@@ -851,7 +980,11 @@ export default definePlugin({
                                 if (old.provider && !match.provider) { match.provider = old.provider; hasMergedMiddle = true; }
                             }
                             const seen = new Set(latestEmbeds.map(stableFp));
-                            const missing = oldEmbeds.filter((e: any) => !seen.has(stableFp(e)));
+                            // Same rule as the live path: resurrect only on pure removal. A fresh
+                            // embed set is a legitimate replacement, not a strip.
+                            const loggedSeen = new Set(oldEmbeds.map(stableFp));
+                            const hasNewEmbeds = latestEmbeds.some((e: any) => !loggedSeen.has(stableFp(e)));
+                            const missing = hasNewEmbeds ? [] : oldEmbeds.filter((e: any) => !seen.has(stableFp(e)));
                             if (missing.length) merged.embeds = latestEmbeds.length ? [...latestEmbeds, ...missing] : [...oldEmbeds];
                             else if (!latestMessage.embeds) merged.embeds = [...oldEmbeds];
                             else if (hasMergedMiddle) merged.embeds = [...latestEmbeds];

@@ -341,6 +341,53 @@ function isLockEvent(message: any): boolean {
     return false;
 }
 
+function extractLockVictimText(text: string): string | null {
+    const added = text.match(/added\s+(.+?)\s+to\s+uwulock/i);
+    if (added?.[1]) return added[1].trim();
+    const now = text.match(/(.+?)\s+(?:is\s+)?now\s+(?:uwu)?locked/i);
+    if (now?.[1]) {
+        const tail = now[1].split(/[:\n]/).pop()?.trim();
+        if (tail) return tail.slice(-160);
+    }
+    const hasBeen = text.match(/(.+?)\s+has been\s+(?:uwu)?locked/i);
+    if (hasBeen?.[1]) {
+        const tail = hasBeen[1].split(/[:\n]/).pop()?.trim();
+        if (tail) return tail.slice(-160);
+    }
+    return null;
+}
+
+function getLockVictimIds(message: any, protectedIds: Set<string>, guildId: string | undefined): string[] {
+    const text = getSearchableText(message);
+    if (!text) return [];
+    const victimText = extractLockVictimText(text);
+    const out: string[] = [];
+    for (const id of protectedIds) {
+        let isVictim = false;
+        if (victimText !== null) {
+            if (victimText.includes(`<@${id}>`) || victimText.includes(`<@!${id}>`)) isVictim = true;
+            else if (victimText.includes(id) && new RegExp(`\\b${id}\\b`).test(victimText)) isVictim = true;
+            else {
+                const lowerVictim = victimText.toLowerCase();
+                for (const name of getUserDisplayNames(id, guildId)) {
+                    if (name.length >= 3 && lowerVictim.includes(name.toLowerCase())) { isVictim = true; break; }
+                }
+            }
+        } else {
+            // Fallback: no victim pattern — search after "added" to avoid matching the attacker name before it
+            const lower = text.toLowerCase();
+            const addedIdx = lower.indexOf("added");
+            const searchText = addedIdx !== -1 ? text.slice(addedIdx) : text;
+            const pseudo = { content: searchText, mentions: message.mentions, embeds: message.embeds, components: message.components };
+            // isTargeted on the sliced text (reuses display-name + mention logic)
+            if (isTargeted(pseudo as any, id, guildId)) isVictim = true;
+            else if (addedIdx === -1 && isTargeted(message, id, guildId)) isVictim = true;
+        }
+        if (isVictim) out.push(id);
+    }
+    return out;
+}
+
 function handleMessage(message: any) {
     if (!message?.author?.id) return;
     if (!message.channel_id) return;
@@ -400,9 +447,10 @@ function handleMessage(message: any) {
 
     // 2b. Uwulock remove self-defense for slash/bot confirmations: Greed confirms
     // e.g. ":approve: @attacker: Added <name> to uwulock." Strip it and re-protect.
+    // Victim extraction avoids matching your own name as the attacker (":approve: @you: Added HIM...")
     if (settings.store.enableUwulockRemove && isLockEvent(message)) {
         const protectedIds = getProtectedIds();
-        const targeted = getTargetedIds(message, protectedIds, guildId);
+        const targeted = getLockVictimIds(message, protectedIds, guildId);
         if (targeted.length > 0) {
             for (const tid of targeted) {
                 sendBotCommand(message.channel_id, `,uwulock remove <@${tid}>`);
