@@ -1444,6 +1444,16 @@ export const EquicordDevs = Object.freeze({
     },
 } satisfies Record<string, Dev>);
 
+// Same person, three historical names (mixiruri -> nnenaza -> soriita).
+// Keeping ONE shared object reference for all of them so anything that maps
+// TestcordDevs by id (TestcordDevsById) or compares author objects by
+// reference still recognizes plugins authored under any of the old keys.
+const soriitaDev: Dev = {
+    name: "soriita",
+    id: 1544366048889798709n,
+    github: "Mixiruri"
+};
+
 export const TestcordDevs = /* #__PURE__*/ Object.freeze({
     sirphantom89: {
         name: "SirPhantom89",
@@ -1492,11 +1502,8 @@ export const TestcordDevs = /* #__PURE__*/ Object.freeze({
         name: "oma",
         id: 1155026301791514655n
     },
-    nnenaza: {
-        name: "mixiruri",
-        id: 1544366048889798709n,
-        github: "Mixiruri"
-    },
+    nnenaza: soriitaDev,
+    soriita: soriitaDev,
     neoarz: {
         name: "neoarz",
         id: 1485706082080002140n
@@ -1525,10 +1532,7 @@ export const TestcordDevs = /* #__PURE__*/ Object.freeze({
         name: "racify",
         id: 1186067973547495498n
     },
-    mixi: {
-        name: "mixi",
-        id: 1544366048889798709n
-    },
+    mixi: soriitaDev,
     Leon135: {
         name: "Leon135",
         id: 309275452231385088n

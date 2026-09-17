@@ -5,6 +5,7 @@
  */
 
 import { definePluginSettings } from "@api/Settings";
+import { TestcordDevs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
 import { findByPropsLazy } from "@webpack";
 import { FluxDispatcher, Toasts, UserStore } from "@webpack/common";
@@ -312,7 +313,7 @@ export default definePlugin({
     name: "AutoLanguageBlock",
     description: "Automatically blocks users who write in the configured language by detecting keywords in their messages.",
     tags: ["Servers", "Utility"],
-    authors: [{ name: "nnenaza", id: 1485706082080002140n }],
+    authors: [TestcordDevs.soriita],
     settings,
 
     settingsAboutComponent: AboutComponent,
