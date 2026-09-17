@@ -1054,6 +1054,52 @@ function getActiveNameplate(user: any): { src?: string; video?: string; poster?:
     return null;
 }
 
+function getActiveNameplateBackground(user: any): string | null {
+    try {
+        const realPanels = document.querySelectorAll(
+            'section[class*="panels_"]:not(.vc-panels-preview), .panels__5e434:not(.vc-panels-preview), [class*="sidebar_"] [class*="panels_"]'
+        );
+
+        const readBackground = (container: HTMLElement | null): string | null => {
+            if (!container) return null;
+
+            // Prefer the raw inline style Discord sets directly on the element.
+            if (container.style.background) return container.style.background;
+            if (container.style.backgroundImage) return container.style.backgroundImage;
+
+            // Fall back to the computed value in case it was set via a class instead.
+            const computed = window.getComputedStyle(container);
+            if (computed.backgroundImage && computed.backgroundImage !== "none") {
+                return computed.backgroundImage;
+            }
+            if (computed.backgroundColor && computed.backgroundColor !== "rgba(0, 0, 0, 0)" && computed.backgroundColor !== "transparent") {
+                return computed.backgroundColor;
+            }
+            return null;
+        };
+
+        for (const p of Array.from(realPanels)) {
+            const video = p.querySelector<HTMLVideoElement>(
+                '.container_df39b2 video, [class*="container_df39b2"] video, [class*="nameplate"] video'
+            );
+            const container = video
+                ? (video.closest('.container_df39b2, [class*="container_df39b2"], .container__37e49') as HTMLElement | null)
+                : p.querySelector<HTMLElement>('.container_df39b2, [class*="container_df39b2"], [class*="nameplate"]');
+
+            const bg = readBackground(container);
+            if (bg) return bg;
+        }
+
+        // Document-wide fallback, mirroring getActiveNameplate's fallback search.
+        const anyContainer = document.querySelector<HTMLElement>(
+            '.container_df39b2, [class*="container_df39b2"]'
+        );
+        const bg = readBackground(anyContainer);
+        if (bg) return bg;
+    } catch { }
+    return null;
+}
+
 function LiveAccountProfilePreview({ pluginSettings }: { pluginSettings?: any; }) {
     const user = useStateFromStores([UserStore], () => UserStore?.getCurrentUser?.());
     const username = user?.username || "User";
@@ -1064,11 +1110,14 @@ function LiveAccountProfilePreview({ pluginSettings }: { pluginSettings?: any; }
     const isAllTop = pluginSettings?.userPanelLayout === "all_top";
 
     const [nameplate, setNameplate] = useState(() => getActiveNameplate(user));
+    const [nameplateBackground, setNameplateBackground] = useState(() => getActiveNameplateBackground(user));
 
     useEffect(() => {
         const update = () => {
             const np = getActiveNameplate(user);
             if (np) setNameplate(np);
+            const npb = getActiveNameplateBackground(user);
+            if (npb) setNameplateBackground(npb);
         };
         update();
         const t1 = setTimeout(update, 100);
@@ -1117,7 +1166,7 @@ function LiveAccountProfilePreview({ pluginSettings }: { pluginSettings?: any; }
                         overflow: "hidden",
                         pointerEvents: "none",
                         zIndex: 0,
-                        background: "linear-gradient(90deg, rgba(115, 11, 200, 0.1) 0%, rgba(115, 11, 200, 0.4) 100%)",
+                        background: nameplateBackground || undefined,
                     }}
                 >
                     {nameplate.video ? (
